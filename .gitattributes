@@ -1,0 +1,9 @@
+# PERCHÉ: gli script bash/python DEVONO avere fine riga LF — i CRLF
+# rompono bash e shebang nei container Linux (lo stesso repo gira su Windows).
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.dart text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.json text eol=lf

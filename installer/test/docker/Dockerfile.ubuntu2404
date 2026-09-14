@@ -1,0 +1,17 @@
+# Test container dell'installer — Ubuntu 24.04 (piattaforma primaria).
+FROM ubuntu:24.04
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl python3 xz-utils shellcheck \
+ && mkdir -p /opt/cache \
+ && (cd /opt/cache && apt-get download libpq5) \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY install.sh /opt/installer/install.sh
+COPY lib /opt/installer/lib
+COPY test /opt/installer/test
+
+WORKDIR /opt/installer
+
+ENTRYPOINT ["bash", "/opt/installer/test/docker/run-tests.sh"]

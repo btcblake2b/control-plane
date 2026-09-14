@@ -1,0 +1,21 @@
+name: nwc_cln_bridge
+description: >-
+  Bridge NWC/NCC ↔ Core Lightning: espone un nodo CLN (fork blake2b) via
+  Nostr Wallet Connect (NIP-47) e NCC, così l'app Flutter (client NWC/NCC)
+  può gestire pagamenti e canali senza modifiche al nodo.
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  bip340: ^0.3.0
+  crypto: ^3.0.3
+  http: ^1.3.0
+  pointycastle: ^3.9.1
+  web_socket_channel: ^3.0.3
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.25.0

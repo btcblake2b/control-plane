@@ -1,0 +1,9 @@
+{
+  "relay": "wss://relay.damus.io",
+  "privkeyHex": "GENERA_CON--genkey",
+  "clnUrl": "http://127.0.0.1:3001",
+  "runeFile": "/home/filippo/.lightning/bridge-rune",
+  "alias": "btcblake2b-bridge",
+  "allowedClientPubkeys": [],
+  "logLevel": "info"
+}
