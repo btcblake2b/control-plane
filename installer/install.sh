@@ -9,7 +9,7 @@
 # nessun segreto (token, secret, rune, chiavi) viene mai loggato.
 set -euo pipefail
 
-INSTALLER_VERSION="0.1.0"
+INSTALLER_VERSION="0.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Pin di default (fail-closed) ────────────────────────────────────────────
@@ -20,13 +20,13 @@ CLN_SHA256_UBUNTU_2204="9d70d13eab72fe2b727d9070e5a0551280f8154c612f3bb2806c5d7a
 CLN_SHA256_UBUNTU_2404="439c9e79a4cfb4ed0560a79c5199b2b5006a1cbca6f800934a4e1bc25c3750c5"
 CLN_SHA256_UBUNTU_2604="80f53c3cfa95803257722f61d3f3948b9e816af80e1ee5e4ec33f3724020c0c8"
 
-# Bridge: release ufficiale dal repo btc-blake2b-control-plane (v0.1.0).
+# Bridge: release ufficiale dal repo btc-blake2b-control-plane (v0.2.0).
 # Pin ATTIVO: sha256 verificato fail-closed a ogni installazione. L'override
 # esplicito (--bridge-url/--bridge-sha256 + --allow-custom-urls) resta per
 # test/CI con artifact locali. Build riproducibile: scripts/build-bridge-release.sh.
-BRIDGE_RELEASE="v0.1.0"
+BRIDGE_RELEASE="v0.2.0"
 BRIDGE_URL_DEFAULT="https://github.com/btcblake2b/control-plane/releases/download/${BRIDGE_RELEASE}/bridge-exe-linux-amd64"
-BRIDGE_SHA256_DEFAULT="5f2e4856a5b45db293ad331ca16663faa902f025f1b58f32d813df4346102773"
+BRIDGE_SHA256_DEFAULT="84659dc8b4668ca9635ffbc43369aef53d794646caa8cb21c7d477560327a25a"
 
 # ── Stato (default; sovrascrivibili dai flag) ───────────────────────────────
 MODE="install"

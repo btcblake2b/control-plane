@@ -5,7 +5,7 @@
 > per installare Core Lightning (fork blake2b) + bridge NWC/NCC sul proprio server.
 > NON è un wallet e NON è un servizio di custodia: le chiavi restano dell'utente.
 
-**Stato Fase 1**: A1–A5 ✓ completata. **Release `v0.1.0`** del pacchetto di installazione pubblicata (installer + bridge, asset verificabili via `SHA256SUMS`).
+**Stato Fase 1**: A1–A5 ✓ completata. **Release `v0.2.0`** del pacchetto di installazione pubblicata (installer + bridge, asset verificabili via `SHA256SUMS`).
 
 ## Architettura
 
@@ -34,7 +34,7 @@
 
 ## Release
 
-- **Installer**: `tlw-node-installer-0.1.0.tar.gz` — dalla GitHub Release `v0.1.0` (con `SHA256SUMS`); guida: `docs/INSTALLER.md`.
+- **Installer**: `tlw-node-installer-0.2.0.tar.gz` — dalla GitHub Release `v0.2.0` (con `SHA256SUMS`); guida: `docs/INSTALLER.md`.
 - **Bridge**: `bridge-exe-linux-amd64` (stessa release) — buildato dal sorgente in `bridge/` con `scripts/build-bridge-release.sh` (Dart 3.13.3; sorgente incluso e ricostruibile).
 - Packaging: `scripts/package-installer.sh` · pubblicazione: `scripts/publish-release.ps1`.
 

@@ -25,6 +25,7 @@ class BridgeConfig {
     this.alias,
     List<String>? allowedClientPubkeys,
     this.logLevel = 'info',
+    this.notifyPollSeconds = 20,
   }) : allowedClientPubkeys = allowedClientPubkeys ?? [];
 
   /// Relay Nostr (wss://) su cui il bridge ascolta le richieste.
@@ -51,6 +52,9 @@ class BridgeConfig {
 
   /// Livello di log (debug|info|warn|error).
   final String logLevel;
+
+  /// Intervallo del poll notifiche in secondi (0 = notifiche disattivate).
+  final int notifyPollSeconds;
 
   static final RegExp _hex64 = RegExp(r'^[0-9a-fA-F]{64}$');
 
@@ -87,6 +91,7 @@ class BridgeConfig {
               .map((e) => '$e'.toLowerCase())
               .toList(),
       logLevel: '${json['logLevel'] ?? 'info'}',
+      notifyPollSeconds: (json['notifyPollSeconds'] as num?)?.toInt() ?? 20,
     );
   }
 
@@ -106,6 +111,7 @@ class BridgeConfig {
         if (alias != null) 'alias': alias,
         'allowedClientPubkeys': allowedClientPubkeys,
         'logLevel': logLevel,
+        'notifyPollSeconds': notifyPollSeconds,
       };
 
   /// Legge la rune dal file (formato RTL `LIGHTNING_RUNE="…"` o valore raw).

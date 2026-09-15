@@ -62,7 +62,7 @@ Errori uniformi: `{"error":{"code":"…","message":"…"}}`. Body ≤ 8KB. Times
 
 ### `POST /v1/register`
 ```json
-{ "token": "<64hex>", "bridgePubkey": "<64hex>", "relay": "wss://…", "alias": "casa", "version": "0.1.0" }
+{ "token": "<64hex>", "bridgePubkey": "<64hex>", "relay": "wss://…", "alias": "casa", "version": "0.2.0" }
 ```
 → `201 {"nodeId":"<32hex>","nodeSecret":"<64hex>","createdAt":"…"}` (il secret è mostrato **una volta sola**).
 Il token viene consumato **solo su successo** (un 409 non lo brucia).

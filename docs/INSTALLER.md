@@ -8,7 +8,7 @@ control plane non vi accede mai.
 ## Download e verifica (utente finale)
 
 1. Dalla pagina **Releases** di `btcblake2b/control-plane` scarica:
-   - `tlw-node-installer-0.1.0.tar.gz` — il pacchetto di installazione
+   - `tlw-node-installer-0.2.0.tar.gz` — il pacchetto di installazione
    - `SHA256SUMS` — i checksum (pacchetto + bridge)
 2. Verifica il pacchetto:
 
@@ -19,8 +19,8 @@ control plane non vi accede mai.
 3. Estrai ed esegui:
 
    ```bash
-   tar -xzf tlw-node-installer-0.1.0.tar.gz
-   cd tlw-node-installer-0.1.0
+   tar -xzf tlw-node-installer-0.2.0.tar.gz
+   cd tlw-node-installer-0.2.0
    ./install.sh --bitcoind-rpc rpcuser:rpcpass@127.0.0.1:8332
    ```
 

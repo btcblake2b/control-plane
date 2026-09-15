@@ -79,6 +79,16 @@ class ClnRestClient implements ClnApi {
       _logger.warn('CLN $method → errore: $msg');
       throw RpcError('OTHER', msg);
     }
+    // PERCHÉ (I3e): su alcuni errori (es. getroute → code 205 "Could not find a
+    // route") clnrest risponde HTTP 500 con l'errore CLN in chiaro — `code` e
+    // `message` al livello superiore, senza wrapper `error`. Senza questo ramo
+    // l'app vedrebbe solo "CLN HTTP 500" e non il motivo reale.
+    final rawCode = body['code'];
+    final rawMessage = body['message'];
+    if (res.statusCode >= 400 && rawCode is num && rawMessage != null) {
+      _logger.warn('CLN $method → errore nodo $rawCode: $rawMessage');
+      throw RpcError('OTHER', '$rawMessage');
+    }
     // // PERCHÉ: clnrest risponde 201 (Created) sui comandi riusciti —
     // accettiamo tutta la famiglia 2xx.
     if (res.statusCode < 200 || res.statusCode >= 300) {

@@ -46,6 +46,7 @@ class BridgeService {
   bool _warnedNoAllowlist = false;
   bool _stopped = false;
   Timer? _healthTimer;
+  Timer? _notifyTimer;
 
   /// Pubkey Nostr del bridge (= "wallet pubkey" nella URI per l'app).
   String get publicKey => _pubHex;
@@ -56,6 +57,7 @@ class BridgeService {
     _logger.info('in ascolto su ${config.relay}');
     _logger.info('pubkey bridge: $_pubHex');
     await _publishInfoEvents();
+    _startNotifier();
     // // PERCHÉ: i relay (e le reti instabili) chiudono le connessioni: senza
     // un health check il bridge smetterebbe di ricevere senza accorgersene.
     _healthTimer = Timer.periodic(
@@ -110,6 +112,8 @@ class BridgeService {
     _stopped = true;
     _healthTimer?.cancel();
     _healthTimer = null;
+    _notifyTimer?.cancel();
+    _notifyTimer = null;
     await _sub?.cancel();
     _sub = null;
     await transport.close();
@@ -122,12 +126,18 @@ class BridgeService {
       await _publish(
         Protocol.infoKindNwc,
         Protocol.nwcInfoContent,
-        const [],
+        [
+          ['encryption', 'nip04'],
+          ['notifications', Protocol.nwcNotifications.join(' ')],
+        ],
       );
       await _publish(
         Protocol.infoKindNcc,
         Protocol.nccInfoContent,
-        const [],
+        [
+          ['encryption', 'nip04'],
+          ['notifications', Protocol.nccNotifications.join(' ')],
+        ],
       );
     } catch (e) {
       _logger.warn('eventi info non pubblicati: $e');
@@ -229,6 +239,66 @@ class BridgeService {
       _logger.info('risposta inviata (req=${event.id}, evt=${reply.id})');
     } catch (e) {
       _logger.error('invio risposta fallito: $e');
+    }
+  }
+
+  /// Avvia il poll delle notifiche (0 = disattivato in config).
+  ///
+  /// // PERCHÉ: l'app deve sapere "da sola" quando arriva un pagamento o
+  /// cambia lo stato di un canale — senza servizi in background sul telefono.
+  void _startNotifier() {
+    final seconds = config.notifyPollSeconds;
+    if (seconds <= 0) {
+      _logger.info('notifiche disattivate (notifyPollSeconds=0)');
+      return;
+    }
+    _logger.info('poll notifiche ogni ${seconds}s');
+    _notifyTimer = Timer.periodic(
+      Duration(seconds: seconds),
+      (_) => unawaited(_pollNotifications()),
+    );
+  }
+
+  Future<void> _pollNotifications() async {
+    if (_stopped) return;
+    try {
+      final events = await handlers.pollNotifications();
+      for (final n in events) {
+        await _publishNotification(n);
+      }
+    } catch (e) {
+      _logger.warn('poll notifiche fallito: $e');
+    }
+  }
+
+  /// Pubblica una notifica cifrata (NIP-04) a TUTTI i client autorizzati.
+  Future<void> _publishNotification(BridgeNotification n) async {
+    final content = jsonEncode({
+      'notification_type': n.type,
+      'notification': n.payload,
+    });
+    for (final clientPub in config.allowedClientPubkeys) {
+      try {
+        final encrypted = NostrCrypto.nip04Encrypt(
+          privkeyHex: config.privkeyHex,
+          pubkeyHex: clientPub,
+          plaintext: content,
+        );
+        final event = NostrEvent.unsigned(
+          pubkey: _pubHex,
+          kind: n.isNcc
+              ? Protocol.nccNotificationKind
+              : Protocol.nwcNotificationKind,
+          tags: [
+            ['p', clientPub],
+          ],
+          content: encrypted,
+        ).sign(config.privkeyHex);
+        await transport.publish(event);
+        _logger.info('notifica ${n.type} → ${clientPub.substring(0, 8)}…');
+      } catch (e) {
+        _logger.warn('notifica ${n.type} non pubblicata: $e');
+      }
     }
   }
 

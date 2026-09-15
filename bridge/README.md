@@ -47,14 +47,37 @@ dart run bin/bridge.dart
 cd ~/bridge && nohup dart run bin/bridge.dart > bridge.log 2>&1 &
 ```
 
+### Deploy di un aggiornamento (script)
+
+PERCHÉ: i comandi complessi via SSH soffrono il quoting PowerShell→bash —
+si usa uno script copiato con `scp` (stessa lezione del setup RTL).
+
+```powershell
+# dal PC (repo): carica i sorgenti modificati + lo script, poi lancia il deploy
+scp bridge\lib\src\protocol.dart bridge\lib\src\handlers.dart "<utente>@<server>:~/bridge/lib/src/"
+scp scripts\deploy-bridge.sh "<utente>@<server>:~/bridge/deploy-bridge.sh"
+ssh <utente>@<server> "sed -i 's/\r$//' ~/bridge/deploy-bridge.sh; bash ~/bridge/deploy-bridge.sh"
+```
+
+Lo script fa: backup del binario con timestamp → **stop del processo** (su Linux
+non si può sovrascrivere un eseguibile in uso) → `dart compile exe` →
+`run.sh start` → sonda `bin/probe.dart` (in caso di compilazione fallita,
+riavvia subito il binario precedente). Se `dart` non è nel PATH non
+interattivo lo cerca (`~/dart-sdk`, `~/dart`) o si passa esplicitamente:
+`DART=/percorso/dart bash deploy-bridge.sh`.
+
 ## Metodi supportati
 
 | Metodo | Tipo | Comando CLN | Note |
 |---|---|---|---|
-| `get_info` | NWC | `getinfo` | `network: "blake2b"` |
+| `get_info` | NWC | `getinfo` + `listpeers` | `network: "blake2b"`; `num_peers_connected` additivo (peer CONNESSI, non registrati; I4a) |
 | `get_balance` | NWC | `listfunds` + `listpeerchannels` | saldo canali attivi + on-chain |
 | `make_invoice` | NWC | `invoice` | amount in **msat** |
 | `pay_invoice` | NWC | `pay` | ritorna preimage + fee |
+| `make_new_address` | NWC | `newaddr` | indirizzo on-chain (P2WPKH `bech32`) |
+| `pay_onchain` | NWC | `withdraw` | `amount_sat` (o `all`), `feerate` opzionale |
+| `estimate_onchain_fees` | NWC | `feerates` | `{min, economical, priority}` in sat/vB |
+| `list_addresses` | NWC | `listaddresses` | fallback su `listfunds` se il comando non esiste |
 | `list_channels` | NCC | `listpeerchannels` | mapping → `LdkChannelInfo` (**msat**) |
 | `open_channel` | NCC | `connect` + `fundchannel` | `host` opzionale |
 | `close_channel` | NCC | `close` | `force` → chiusura unilaterale |
@@ -77,3 +100,13 @@ cd ~/bridge && nohup dart run bin/bridge.dart > bridge.log 2>&1 &
 - `pay_invoice`/`open_channel` sono sincroni: se il nodo impiega più del
   timeout del client (30 s) la risposta arriva tardi e il client va in timeout.
 - Saldi in **msat** (convenzione NWC/LDK).
+
+## Compatibilità fork CLN — release `.4` (15/09/2026)
+
+- Dalla release **`.4`** del fork il nodo segnala `option_blake2b` (**bit 68 obbligatorio** in
+  `init`): NON fa peering con nodi non aggiornati → via bridge, `connect_peer`/`open_channel` verso
+  peer della linea `.2/.3` falliscono finché non aggiornano (gate del **nodo**; il bridge non cambia).
+- La **rune** del bridge deriva da `hsm_secret` e **sopravvive** agli upgrade del nodo → nessuna
+  rigenerazione; la sonda (`bin/probe.dart`) resta la verifica end-to-end. Con un nodo senza canali
+  usabili la sonda **salta `get_route`** (la rotta non può esistere) invece di segnalare un falso
+  fallimento.

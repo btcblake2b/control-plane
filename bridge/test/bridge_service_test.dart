@@ -54,6 +54,10 @@ class FakeTransport implements NostrTransport {
 
 /// Nodo CLN finto minimale per il giro end-to-end.
 class FakeCln implements ClnApi {
+  Map<String, dynamic> invoices = const {'invoices': []};
+  Map<String, dynamic> pays = const {'pays': []};
+  Map<String, dynamic> channels = const {'channels': []};
+
   @override
   Future<Map<String, dynamic>> call(
     String method, [
@@ -69,7 +73,11 @@ class FakeCln implements ClnApi {
           ],
         };
       case 'listpeerchannels':
-        return {'channels': []};
+        return channels;
+      case 'listinvoices':
+        return invoices;
+      case 'listpays':
+        return pays;
       default:
         throw RpcError('OTHER', 'non simulato: $method');
     }
@@ -276,5 +284,92 @@ void main() {
     expect(transport.connectCalls, before + 2);
 
     await fresh.stop();
+  });
+
+  test('notifiche disattivate con notifyPollSeconds=0', () async {
+    final cfg = BridgeConfig(
+      relay: 'wss://relay.test',
+      privkeyHex: bridgePriv,
+      clnUrl: 'http://127.0.0.1:3001',
+      allowedClientPubkeys: [clientPub],
+      notifyPollSeconds: 0,
+    );
+    final svc = BridgeService(
+      transport: transport,
+      handlers: NwcHandlers(cln: FakeCln()),
+      config: cfg,
+    );
+    await svc.start();
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    expect(
+      transport.published.any((e) => e.kind == Protocol.nwcNotificationKind),
+      isFalse,
+    );
+    await svc.stop();
+  });
+
+  test('poll notifiche: payment_received pubblicato e decifrabile', () async {
+    final cln = FakeCln();
+    // Il primo giro "innesca" con uno storico già pagato: nessuna notifica.
+    cln.invoices = {
+      'invoices': [
+        {
+          'payment_hash': 'h1',
+          'status': 'paid',
+          'amount_received_msat': 1000000,
+        },
+      ],
+    };
+    final cfg = BridgeConfig(
+      relay: 'wss://relay.test',
+      privkeyHex: bridgePriv,
+      clnUrl: 'http://127.0.0.1:3001',
+      allowedClientPubkeys: [clientPub],
+      notifyPollSeconds: 1,
+    );
+    final svc = BridgeService(
+      transport: transport,
+      handlers: NwcHandlers(cln: cln),
+      config: cfg,
+    );
+    await svc.start();
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    expect(
+      transport.published.any((e) => e.kind == Protocol.nwcNotificationKind),
+      isFalse,
+    );
+
+    // Nuovo pagamento → notifica cifrata al client autorizzato.
+    cln.invoices = {
+      'invoices': [
+        {'payment_hash': 'h1', 'status': 'paid'},
+        {
+          'payment_hash': 'h2',
+          'status': 'paid',
+          'amount_received_msat': 2000000,
+        },
+      ],
+    };
+    await _waitFor(
+      () => transport.published.any(
+        (e) => e.kind == Protocol.nwcNotificationKind,
+      ),
+      timeout: const Duration(seconds: 4),
+    );
+    final event = transport.published.firstWhere(
+      (e) => e.kind == Protocol.nwcNotificationKind,
+    );
+    expect(event.firstTagValue('p'), clientPub);
+    expect(event.verify(), isTrue);
+
+    final decrypted = NostrCrypto.nip04Decrypt(
+      privkeyHex: clientPriv,
+      pubkeyHex: event.pubkey,
+      payload: event.content,
+    );
+    final body = (jsonDecode(decrypted) as Map).cast<String, dynamic>();
+    expect(body['notification_type'], 'payment_received');
+    expect((body['notification'] as Map)['payment_hash'], 'h2');
+    await svc.stop();
   });
 }

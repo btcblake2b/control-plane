@@ -68,6 +68,32 @@ void main() {
       );
     });
 
+    test('HTTP 500 con errore CLN in chiaro → messaggio del nodo (I3e)',
+        () async {
+      // Forma reale di clnrest su getroute senza rotta (code 205).
+      final mock = MockClient(
+        (req) async => http.Response(
+          jsonEncode({'code': 205, 'message': 'Could not find a route'}),
+          500,
+        ),
+      );
+      final client = ClnRestClient(
+        baseUrl: 'http://x',
+        rune: 'r',
+        httpClient: mock,
+      );
+      expect(
+        () => client.call('getroute', {'id': '02aa'}),
+        throwsA(
+          isA<RpcError>().having(
+            (e) => e.message,
+            'message',
+            'Could not find a route',
+          ),
+        ),
+      );
+    });
+
     test('errore di rete → RpcError OTHER', () async {
       final mock = MockClient((req) async => throw Exception('refused'));
       final client = ClnRestClient(
