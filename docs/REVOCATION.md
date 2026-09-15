@@ -1,49 +1,49 @@
-# Revoca, retention e recovery
+# Revocation, retention and recovery
 
-## Principio
+## Principle
 
-**La revoca è locale.** Il control plane non ha accesso ai server degli utenti,
-quindi non può revocare nulla da remoto — e non deve. Ogni azione sul nodo
-(allowlist, stop, uninstall) avviene sul server dell'utente tramite installer.
+**Revocation is local.** The control plane has no access to users' servers,
+so it cannot revoke anything remotely — and it must not. Every action on the
+node (allowlist, stop, uninstall) happens on the user's server via the installer.
 
-## Revoca di un client (telefono perso, app dismessa)
+## Revoking a client (lost phone, decommissioned app)
 
 ```bash
-./install.sh --revoke-client <PUBKEY_CLIENT>   # rimuove dall'allowlist + restart
+./install.sh --revoke-client <CLIENT_PUBKEY>   # removes from the allowlist + restart
 ```
 
-- Effetto **immediato**: la URI di quel client non è più autorizzata dal bridge.
-- La pubkey del client viene mostrata quando si genera la URI (`--genuri`).
-- Lato control plane non c'è nulla da aggiornare: il CP non conosce i client,
-  solo il nodo (pubkey del *bridge*).
+- **Immediate** effect: that client's URI is no longer authorized by the bridge.
+- The client pubkey is shown when the URI is generated (`--genuri`).
+- On the control plane side there is nothing to update: the CP does not know the
+  clients, only the node (*bridge* pubkey).
 
-## Eliminazione del record del nodo
+## Deleting the node record
 
-| Attore | Comando | Effetto |
+| Actor | Command | Effect |
 |---|---|---|
-| Utente | `DELETE /v1/nodes/<id>` con Bearer `node_secret` (anche via `--status` per verificare) | **Hard delete immediato** dei dati pseudonimi |
-| Operatore (recovery) | `admin node delete <id>` | Hard delete; usato quando l'utente ha perso `node.json` |
+| User | `DELETE /v1/nodes/<id>` with Bearer `node_secret` (also via `--status` to check) | **Immediate hard delete** of pseudonymous data |
+| Operator (recovery) | `admin node delete <id>` | Hard delete; used when the user lost `node.json` |
 
-Dopo il delete: `GET` → `404`; per ri-registrarsi serve un **nuovo token**.
+After the delete: `GET` → `404`; to re-register you need a **new token**.
 
 ## Retention
 
-| Dato | Politica | Stato |
+| Data | Policy | Status |
 |---|---|---|
-| Token scaduti/usati | Purge > **7 giorni** (`admin token purge`) | Implementato |
-| Record nodi | Fino a delete esplicito (hard delete immediato) | Implementato |
-| Nodi inattivi | Nessun purge automatico in questa fase (manca l'heartbeat, in arrivo con M-B) | Da fare (M-B) |
-| Log del CP | Consigliato 30 giorni, senza contenuti sensibili (i log non contengono mai segreti) | Documentato |
+| Expired/used tokens | Purge > **7 days** (`admin token purge`) | Implemented |
+| Node records | Until explicit delete (immediate hard delete) | Implemented |
+| Inactive nodes | No automatic purge in this phase (heartbeat missing, coming with M-B) | To do (M-B) |
+| CP logs | Recommended 30 days, without sensitive contents (logs never contain secrets) | Documented |
 
-## Recovery — casi pratici
+## Recovery — practical cases
 
-1. **`node.json` perso (secret smarrito)**: `admin node delete <id>` (operatore) → nuovo token → `install.sh --register …`. Non si trasmettono mai segreti dall'operatore all'utente.
-2. **Secret sospetto**: l'utente esegue `--rotate-secret` (vecchio invalidato subito).
-3. **Token scaduto/riusato**: nuovo token (`admin token create`).
-4. **Conflitto 409 su ri-registrazione**: record vecchio ancora presente → delete + nuovo token.
+1. **Lost `node.json` (secret gone)**: `admin node delete <id>` (operator) → new token → `install.sh --register …`. Secrets are never transmitted from the operator to the user.
+2. **Suspected secret**: the user runs `--rotate-secret` (old one invalidated immediately).
+3. **Expired/reused token**: new token (`admin token create`).
+4. **409 conflict on re-registration**: old record still present → delete + new token.
 
-## GDPR (sintesi)
+## GDPR (summary)
 
-- Dati trattati: **pseudonimi** (pubkey, relay, alias scelto dall'utente, versione, timestamp) — nessuna PII necessaria al servizio.
-- Diritto alla cancellazione: self-service (DELETE) o richiesta all'operatore; il delete è immediato e definitivo.
-- Minimizzazione: il control plane è opt-in e non è necessario al funzionamento del wallet o del nodo (il nodo vive senza CP).
+- Data processed: **pseudonymous** (pubkey, relay, user-chosen alias, version, timestamp) — no PII needed for the service.
+- Right to erasure: self-service (DELETE) or request to the operator; deletion is immediate and permanent.
+- Minimization: the control plane is opt-in and not required for the wallet or the node to work (the node lives without the CP).

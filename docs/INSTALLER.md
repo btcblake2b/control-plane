@@ -1,46 +1,46 @@
-# Guida all'installer — nodo Lightning blake2b + bridge NWC/NCC
+# Installer guide — blake2b Lightning node + NWC/NCC bridge
 
-`installer/install.sh` installa sul **tuo** server un nodo Core Lightning (fork
-blake2b) e il bridge NWC/NCC, poi (opzionalmente) registra il nodo al control
-plane. Modello **self-hosted assistito**: lo script gira sulla tua macchina, il
-control plane non vi accede mai.
+`installer/install.sh` installs on **your** server a Core Lightning node
+(blake2b fork) and the NWC/NCC bridge, then (optionally) registers the node
+with the control plane. **Assisted self-hosted** model: the script runs on
+your machine, the control plane never accesses it.
 
-## Download e verifica (utente finale)
+## Download and verification (end user)
 
-1. Dalla pagina **Releases** di `btcblake2b/control-plane` scarica:
-   - `tlw-node-installer-0.2.0.tar.gz` — il pacchetto di installazione
-   - `SHA256SUMS` — i checksum (pacchetto + bridge)
-2. Verifica il pacchetto:
+1. From the **Releases** page of `btcblake2b/control-plane` download:
+   - `tlw-node-installer-0.2.1.tar.gz` — the installation package
+   - `SHA256SUMS` — the checksums (package + bridge)
+2. Verify the package:
 
    ```bash
    sha256sum -c SHA256SUMS --ignore-missing
    ```
 
-3. Estrai ed esegui:
+3. Extract and run:
 
    ```bash
-   tar -xzf tlw-node-installer-0.2.0.tar.gz
-   cd tlw-node-installer-0.2.0
+   tar -xzf tlw-node-installer-0.2.1.tar.gz
+   cd tlw-node-installer-0.2.1
    ./install.sh --bitcoind-rpc rpcuser:rpcpass@127.0.0.1:8332
    ```
 
-L'installer scarica da solo CLN e il bridge (asset `bridge-exe-linux-amd64`
-della stessa release) **verificando lo sha256 pinnato**: non serve scaricarli
-a mano.
+The installer downloads CLN and the bridge by itself (`bridge-exe-linux-amd64`
+asset of the same release) **verifying the pinned sha256**: no manual
+downloads required.
 
-## Prerequisiti
+## Prerequisites
 
-| Requisito | Note |
+| Requirement | Notes |
 |---|---|
-| Ubuntu **22.04 / 24.04 / 26.04**, x86_64 | Altre distro: solo con artifact custom (`--cln-url/--cln-sha256 --allow-custom-urls`). Debian 12 non è coperta dai binari upstream. |
-| **bitcoind blake2b** raggiungibile (RPC) | L'installer NON installa il full node (fuori scope). Riferimento: `DarkWebDivingClub/bitcoin-knots`. Auto-detect da `~/.bitcoin/bitcoin.conf` o `--bitcoind-rpc user:pass@host:port`. |
-| `curl`, `python3` | Già presenti su Ubuntu standard. |
-| Nessun `sudo` richiesto | Installazione completamente user-level (`~/cln-blake2b`, `~/bridge`, `~/.lightning`). |
+| Ubuntu **22.04 / 24.04 / 26.04**, x86_64 | Other distros: only with custom artifacts (`--cln-url/--cln-sha256 --allow-custom-urls`). Debian 12 is not covered by the upstream binaries. |
+| Reachable **bitcoind blake2b** (RPC) | The installer does NOT install the full node (out of scope). Reference: `DarkWebDivingClub/bitcoin-knots`. Auto-detected from `~/.bitcoin/bitcoin.conf` or `--bitcoind-rpc user:pass@host:port`. |
+| `curl`, `python3` | Already present in standard Ubuntu. |
+| No `sudo` required | Fully user-level installation (`~/cln-blake2b`, `~/bridge`, `~/.lightning`). |
 
 ## Quick start
 
-1. Chiedi all'operatore del control plane un **token di registrazione** (64 hex, monouso, scade in 24h).
-2. Sul tuo server:
+1. Ask the control plane operator for a **registration token** (64 hex, single-use, expires in 24h).
+2. On your server:
 
 ```bash
 ./install.sh \
@@ -49,78 +49,77 @@ a mano.
   --register-token <TOKEN_64_HEX>
 ```
 
-3. Alla fine lo script stampa **URI NWC/NCC + QR**: incollala/scansionala nell'app
-   (sezione Lightning → Connetti). La URI contiene un segreto: non condividerla.
+3. At the end the script prints the **NWC/NCC URI + QR**: paste/scan it in the app
+   (Lightning → Connect). The URI contains a secret: do not share it.
 
-Se il control plane è irraggiungibile, l'installazione **completa comunque**;
-la registrazione si differisce:
+If the control plane is unreachable, the installation **still completes**;
+registration is deferred:
 
 ```bash
 ./install.sh --register --register-token <TOKEN> --control-plane https://cp.example.org
 ```
 
-## Comandi
+## Commands
 
-| Comando | Effetto |
+| Command | Effect |
 |---|---|
-| `install.sh [opzioni]` | Installa/aggiorna (idempotente: non sovrascrive config e rune esistenti) |
-| `--dry-run` | Stampa il piano completo senza eseguire nulla |
-| `--status` | Stato locale (CLN, bridge, registrazione) + verifica sul control plane |
-| `--revoke-client <pubkey>` | Rimuove un client dall'allowlist del bridge (revoca **locale**) |
-| `--rotate-secret` | Nuovo `node_secret` verso il control plane (il vecchio viene invalidato) |
-| `--register` | Registrazione differita (usa lo stato locale) |
-| `--gen-uri` | Autorizza un **nuovo** client e stampa la URI (per aggiungere un telefono) |
-| `--uninstall --yes` | Rimuove binari e configurazioni. **Il datadir NON viene toccato** |
-| `--uninstall --yes --purge-datadir` | Rimuove ANCHE `~/.lightning` (richiede digitare `PURGE`; **irreversibile**: canali e fondi) |
+| `install.sh [options]` | Install/update (idempotent: never overwrites existing config and rune) |
+| `--dry-run` | Prints the full plan without executing anything |
+| `--status` | Local status (CLN, bridge, registration) + check with the control plane |
+| `--revoke-client <pubkey>` | Removes a client from the bridge allowlist (**local** revocation) |
+| `--rotate-secret` | New `node_secret` toward the control plane (the old one is invalidated) |
+| `--register` | Deferred registration (uses local state) |
+| `--gen-uri` | Authorizes a **new** client and prints the URI (to add a phone) |
+| `--uninstall --yes` | Removes binaries and configuration. **The datadir is NOT touched** |
+| `--uninstall --yes --purge-datadir` | ALSO removes `~/.lightning` (requires typing `PURGE`; **irreversible**: channels and funds) |
 
-Opzioni utili: `--relay wss://…`, `--alias nome`, `--cln-home/--lightning-dir/--bridge-dir/--state-dir`,
-`--clnrest-port N` / `--cln-p2p-port N` / `--cln-grpc-port N` (evitano conflitti in co-tenant; la porta
-clnrest viene usata anche dalla **config del bridge**, che quindi parla sempre con il TUO nodo),
-`--no-systemd` (avvio diretto + run.sh).
+Useful options: `--relay wss://…`, `--alias name`, `--cln-home/--lightning-dir/--bridge-dir/--state-dir`,
+`--clnrest-port N` / `--cln-p2p-port N` / `--cln-grpc-port N` (avoid conflicts in co-tenant setups; the
+clnrest port is also used by the **bridge config**, so it always talks to YOUR node),
+`--no-systemd` (direct start + run.sh).
 
-## Cosa fa l'installer (passi)
+## What the installer does (steps)
 
-1. Preflight (OS/arch, comandi). 2. Verifica bitcoind (TCP). 3. Download CLN
-`v26.06.7-blake2b.3` con **sha256 pinnato** → `~/cln-blake2b` (estrazione
-**completa**: binari in `usr/bin` + plugin in `usr/libexec` — senza i plugin
-il nodo non parte correttamente). 4. libpq5
-user-level (`apt-get download` + `dpkg -x`). 5. Config CLN (600) + avvio
-(systemd --user o `lightningd --daemon`). 6. `getinfo` di verifica. 7. Rune
-dedicata (600). 8. Download bridge (sha256) + config (600) + `--genkey`/`--genuri`.
-9. `run.sh` con pidfile + unit systemd. 10. Registrazione (se richiesta) →
-`~/.tlw-node/node.json` (600). 11. Riepilogo con URI + QR.
+1. Preflight (OS/arch, commands). 2. bitcoind check (TCP). 3. CLN download
+`v26.06.7-blake2b.3` with **pinned sha256** → `~/cln-blake2b` (extraction
+**complete**: binaries in `usr/bin` + plugins in `usr/libexec` — without the
+plugins the node does not start correctly). 4. libpq5 user-level
+(`apt-get download` + `dpkg -x`). 5. CLN config (600) + start
+(systemd --user or `lightningd --daemon`). 6. Verification `getinfo`. 7. Dedicated
+rune (600). 8. Bridge download (sha256) + config (600) + `--genkey`/`--genuri`.
+9. `run.sh` with pidfile + systemd unit. 10. Registration (if requested) →
+`~/.tlw-node/node.json` (600). 11. Summary with URI + QR.
 
-## Sicurezza (by design)
+## Security (by design)
 
-- Ogni download è **fail-closed**: sha256 obbligatorio, mismatch = abort.
-- File sensibili sempre `600` (config, rune, `node.json`, `uri.txt`).
-- Nei log non finiscono mai token, rune, chiavi o secret (solo `~/tlw-node-install.log`).
-- Uninstall compatibile coi fondi: il datadir è sacro di default.
+- Every download is **fail-closed**: sha256 mandatory, mismatch = abort.
+- Sensitive files always `600` (config, rune, `node.json`, `uri.txt`).
+- Logs never contain tokens, runes, keys or secrets (only `~/tlw-node-install.log`).
+- Funds-friendly uninstall: the datadir is sacred by default.
 
-## Limiti noti e avvisi
+## Known limits and notices
 
-- **La URI viene riusata**: un re-run dell'installazione non rigenera l'URI né crea client
-  fantasma (per un nuovo telefono usa `--gen-uri`; per revocare `--revoke-client <pubkey>`).
-- **Release del bridge in preparazione**: il pin ufficiale verrà attivato alla
-  pubblicazione; fino ad allora l'installer richiede artifact espliciti
-  (`--bridge-url/--bridge-sha256 --allow-custom-urls`, uso test/CI).
-- `--skip-start` è **solo per test/CI** (non avvia i servizi).
-- **Upgrade del nodo da `.2` a `.3`**: è **fuori scope** di questa fase. Se lo
-  farai, è una procedura separata: backup di `lightningd.sqlite3`, `hsm_secret`,
-  `emergency.recover`, poi primo avvio con `--database-upgrade=true` (**one-way**).
-- **Feature bit 68 / SIGHASH_UNIFIED**: sperimentali, NON presenti nel `.3`
-  ufficiale. L'installer non li supporta e non li installerà finché il formato
-  non sarà stabile (vedi `SIGNER-CONTRACT.md`).
-- NAS Synology/QNAP: non supportati ufficialmente (checklist community); usare
-  solo se a proprio rischio.
+- **The URI is reused**: re-running the installer does not regenerate the URI nor
+  create ghost clients (for a new phone use `--gen-uri`; to revoke use `--revoke-client <pubkey>`).
+- **Bridge release pin is active**: the installer downloads the bridge from this
+  project's GitHub Release and verifies the pinned sha256 (fail-closed). Custom
+  artifacts (`--bridge-url/--bridge-sha256 --allow-custom-urls`) remain for tests/CI only.
+- `--skip-start` is **only for tests/CI** (does not start services).
+- **Node upgrade between fork releases** (e.g. `.2` → `.3`, `.3` → `.4`) is a
+  **separate procedure**: backup of `lightningd.sqlite3`, `hsm_secret`,
+  `emergency.recover`, then first start with `--database-upgrade=true` (**one-way**).
+- **Feature bit 68 / SIGHASH_UNIFIED**: experimental, NOT present in official `.3`.
+  The installer does not support them and will not install them until the format
+  is stable (see `SIGNER-CONTRACT.md`).
+- Synology/QNAP NAS: not officially supported (community checklist); use only at your own risk.
 
 ## FAQ
 
-- **Token scaduto/utilizzato** → chiedi un nuovo token all'operatore (`admin token create`).
-- **"nodo già registrato" (409)** → l'operatore deve fare `admin node delete <id>` (recovery), poi riprova con un nuovo token.
-- **Ho perso `node.json`** → recovery come sopra: delete + nuovo token + `--register`.
-- **Come revoco un telefono?** → `--revoke-client <pubkey>` (la pubkey è mostrata da `--genuri`).
-- **L'app dice "il nodo non ha autorizzato questa app (grant)"** → è il bridge che risponde
-  `RESTRICTED`. Controlla `clnUrl` in `~/bridge/config.json`: deve puntare alla porta clnrest del
-  TUO nodo (scritta da `--clnrest-port`, default 3001; in co-tenant con più nodi la prima cosa da
-  verificare). Un client revocato richiede una nuova URI (`--gen-uri`).
+- **Expired/used token** → ask the operator for a new token (`admin token create`).
+- **"node already registered" (409)** → the operator must run `admin node delete <id>` (recovery), then retry with a new token.
+- **I lost `node.json`** → recovery as above: delete + new token + `--register`.
+- **How do I revoke a phone?** → `--revoke-client <pubkey>` (the pubkey is shown by `--genuri`).
+- **The app says "the node has not authorized this app (grant)"** → the bridge is
+  responding `RESTRICTED`. Check `clnUrl` in `~/bridge/config.json`: it must point to the
+  clnrest port of YOUR node (set by `--clnrest-port`, default 3001; in co-tenant setups with
+  several nodes it is the first thing to verify). A revoked client needs a new URI (`--gen-uri`).

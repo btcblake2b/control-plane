@@ -1,33 +1,33 @@
-# Control Plane — guida operatore e sviluppatore
+# Control Plane — operator and developer guide
 
-Registro di provisioning **outbound** per nodi Lightning self-hosted
-(bitcoin-blake2b). Non custodisce fondi, non firma, non ha mai accesso ai
-server degli utenti: conserva solo dati pseudonimi (pubkey bridge, relay,
-alias, versione, timestamp) e gli hash di token/secret.
+**Outbound** provisioning registry for self-hosted Lightning nodes
+(bitcoin-blake2b). It does not hold funds, does not sign, and never accesses
+users' servers: it stores only pseudonymous data (bridge pubkey, relay,
+alias, version, timestamp) and token/secret hashes.
 
-## Requisiti e build
+## Requirements and build
 
-- Dart SDK 3.3+ (runtime) — oppure `dart compile exe` per il binario:
+- Dart SDK 3.3+ (runtime) — or `dart compile exe` for the binary:
   ```bash
   cd server
   dart pub get
-  dart analyze && dart test          # gate di sviluppo
+  dart analyze && dart test          # dev gates
   dart compile exe bin/server.dart -o tlw-control-plane
   dart compile exe bin/admin.dart    -o tlw-admin
   ```
-- SQLite (`libsqlite3` di sistema, presente su Ubuntu).
+- SQLite (system `libsqlite3`, present on Ubuntu).
 
-## Configurazione (variabili d'ambiente)
+## Configuration (environment variables)
 
-| Variabile | Default | Note |
+| Variable | Default | Notes |
 |---|---|---|
-| `TLW_CP_BIND` | `127.0.0.1` | Loopback: TLS terminato da un reverse proxy |
+| `TLW_CP_BIND` | `127.0.0.1` | Loopback: TLS terminated by a reverse proxy |
 | `TLW_CP_PORT` | `8787` | |
-| `TLW_CP_DB` | `data/control.db` | Creato automaticamente (WAL) |
-| `TLW_CP_TRUST_PROXY` | `0` | `1` = fidati di `X-Forwarded-For` (SOLO dietro proxy che riscrive l'header) |
-| `TLW_CP_TOKEN_TTL_HOURS` | `24` | Validità dei token di registrazione |
+| `TLW_CP_DB` | `data/control.db` | Created automatically (WAL) |
+| `TLW_CP_TRUST_PROXY` | `0` | `1` = trust `X-Forwarded-For` (ONLY behind a proxy that rewrites the header) |
+| `TLW_CP_TOKEN_TTL_HOURS` | `24` | Registration token validity |
 
-## Deploy (esempio)
+## Deploy (example)
 
 ```ini
 # /etc/systemd/system/tlw-control-plane.service
@@ -48,68 +48,68 @@ WantedBy=multi-user.target
 ```
 
 ```caddyfile
-# Caddy davanti (TLS + X-Forwarded-For verso 127.0.0.1:8787)
+# Caddy in front (TLS + X-Forwarded-For toward 127.0.0.1:8787)
 cp.example.org {
     reverse_proxy 127.0.0.1:8787
 }
 ```
 
-⚠️ Se il CP è esposto **direttamente** (senza proxy): tenere `TLW_CP_TRUST_PROXY=0`.
+⚠️ If the CP is exposed **directly** (without a proxy): keep `TLW_CP_TRUST_PROXY=0`.
 
 ## API v1
 
-Errori uniformi: `{"error":{"code":"…","message":"…"}}`. Body ≤ 8KB. Timestamp ISO8601 UTC.
+Uniform errors: `{"error":{"code":"…","message":"…"}}`. Body ≤ 8KB. Timestamps ISO8601 UTC.
 
 ### `POST /v1/register`
 ```json
-{ "token": "<64hex>", "bridgePubkey": "<64hex>", "relay": "wss://…", "alias": "casa", "version": "0.2.0" }
+{ "token": "<64hex>", "bridgePubkey": "<64hex>", "relay": "wss://…", "alias": "home", "version": "0.2.1" }
 ```
-→ `201 {"nodeId":"<32hex>","nodeSecret":"<64hex>","createdAt":"…"}` (il secret è mostrato **una volta sola**).
-Il token viene consumato **solo su successo** (un 409 non lo brucia).
+→ `201 {"nodeId":"<32hex>","nodeSecret":"<64hex>","createdAt":"…"}` (the secret is shown **once only**).
+The token is consumed **only on success** (a 409 does not burn it).
 
 ### `GET /v1/nodes/<id>` — header `Authorization: Bearer <nodeSecret>`
 → `200 {"id","bridgePubkey","relay","alias","version","createdAt","rotatedAt"}`
 
 ### `DELETE /v1/nodes/<id>` — Bearer
-→ `204` (hard delete immediato; seconda chiamata → `404`)
+→ `204` (immediate hard delete; second call → `404`)
 
-### `POST /v1/nodes/<id>/rotate-secret` — Bearer (secret corrente)
-→ `200 {"nodeSecret":"<nuovo>"}` (il vecchio è invalidato subito)
+### `POST /v1/nodes/<id>/rotate-secret` — Bearer (current secret)
+→ `200 {"nodeSecret":"<new>"}` (the old one is invalidated immediately)
 
-| HTTP | Codice | Quando |
+| HTTP | Code | When |
 |---|---|---|
-| 400 | `INVALID_REQUEST` | payload/JSON non valido |
-| 401 | `INVALID_TOKEN` / `UNAUTHORIZED` | token di registrazione o Bearer errati |
-| 404 | `NOT_FOUND` | id inesistente / rotta sconosciuta |
-| 409 | `ALREADY_REGISTERED` | pubkey già registrata (token non consumato) |
-| 410 | `TOKEN_EXPIRED` / `TOKEN_USED` | token scaduto o già usato |
-| 429 | `RATE_LIMITED` | troppi tentativi (`Retry-After` in secondi) |
+| 400 | `INVALID_REQUEST` | invalid payload/JSON |
+| 401 | `INVALID_TOKEN` / `UNAUTHORIZED` | wrong registration token or Bearer |
+| 404 | `NOT_FOUND` | nonexistent id / unknown route |
+| 409 | `ALREADY_REGISTERED` | pubkey already registered (token not consumed) |
+| 410 | `TOKEN_EXPIRED` / `TOKEN_USED` | expired or already-used token |
+| 429 | `RATE_LIMITED` | too many attempts (`Retry-After` in seconds) |
 
-Rate-limit (in-memory, si azzera al riavvio): register 20 di burst / 10 all'ora per IP;
-endpoint generali 120 di burst / 60 al minuto per IP.
+Rate-limit (in-memory, resets on restart): register 20 burst / 10 per hour per IP;
+general endpoints 120 burst / 60 per minute per IP.
 
-## Admin CLI (`admin`, solo operatore con accesso shell)
+## Admin CLI (`admin`, operator only, with shell access)
 
-**Non esiste alcun endpoint HTTP di amministrazione**: emettere token richiede
-accesso al server. Chi ha SSH al CP è, per definizione, l'operatore.
+**There is no HTTP administration endpoint**: issuing tokens requires
+server access. Whoever has SSH to the CP is, by definition, the operator.
 
 ```bash
-tlw-admin token create --note "per Mario" --ttl 24h   # stampa il token UNA volta
-tlw-admin token list [--all]                          # attivi (default) o tutti
-tlw-admin token purge                                 # scaduti/usati da >7 giorni
+tlw-admin token create --note "for Mario" --ttl 24h  # prints the token ONCE
+tlw-admin token list [--all]                         # active (default) or all
+tlw-admin token purge                                # expired/used >7 days
 tlw-admin node list
-tlw-admin node delete <id> [--yes]                    # recovery / rimozione record
+tlw-admin node delete <id> [--yes]                   # recovery / record removal
 ```
 
 ## Backup
 
-Il database è un file SQLite (`data/control.db` + `-wal`). Backup a servizio
-fermo (o `sqlite3 control.db ".backup backup.db"`). I dati sono pseudonimi e
-ricostruibili: un utente può sempre ri-registrarsi (recovery).
+The database is a SQLite file (`data/control.db` + `-wal`). Backup with the
+service stopped (or `sqlite3 control.db ".backup backup.db"`). Data is pseudonymous and
+rebuildable: a user can always re-register (recovery).
 
-## Sviluppo
+## Development
 
-- Convenzioni: `dart analyze` 0 issue, `dart test` verdi, modelli manuali
-  (niente codegen), commenti `// PERCHÉ` sulle scelte non ovvie.
-- Test: `server/test/` (auth, db, api end-to-end su porta effimera, admin CLI).
-- Memoria condivisa del progetto: `btc-blake2b-wallet/docs/ai-memory/` (ADR in `DECISIONS.md`).
+- Conventions: `dart analyze` 0 issues, `dart test` green, manual models
+  (no codegen), `// WHY` comments on non-obvious choices.
+- Tests: `server/test/` (auth, db, end-to-end api on an ephemeral port, admin CLI).
+- Project shared memory: `btc-blake2b-wallet/docs/ai-memory/` (ADRs in `DECISIONS.md`).

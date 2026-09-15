@@ -1,48 +1,48 @@
 # Threat Model — installer + control plane
 
-Scope: `installer/` (gira sul server dell'utente) e `server/` (gira
-sull'infrastruttura del progetto). Fuori scope: il wallet (altro repo) e il
-nodo CLN/bitcoind di per sé.
+Scope: `installer/` (runs on the user's server) and `server/` (runs on the
+project's infrastructure). Out of scope: the wallet (other repo) and the
+CLN/bitcoind node itself.
 
-## Asset
+## Assets
 
-| Asset | Dove | Sensibilità |
+| Asset | Where | Sensitivity |
 |---|---|---|
-| Token di registrazione | Emesso dal CP, usato dall'installer | Monouso, TTL |
-| `node_secret` | `~/.tlw-node/node.json` (utente) / hash nel CP | Credenziale utente→CP |
-| Rune CLN | `~/.lightning/bridge-rune` (600) | Controllo ristretto del nodo |
-| Chiave privata bridge | `~/bridge/config.json` (600) | Identità NWC del bridge |
-| URI NWC/NCC | `~/bridge/uri.txt` (600), app | Contiene il segreto client |
-| Binari CLN/bridge | Download pinned | Supply chain |
+| Registration token | Issued by the CP, used by the installer | Single-use, TTL |
+| `node_secret` | `~/.tlw-node/node.json` (user) / hash in the CP | user→CP credential |
+| CLN rune | `~/.lightning/bridge-rune` (600) | Restricted control of the node |
+| Bridge private key | `~/bridge/config.json` (600) | NWC identity of the bridge |
+| NWC/NCC URI | `~/bridge/uri.txt` (600), app | Contains the client secret |
+| CLN/bridge binaries | Pinned downloads | Supply chain |
 
-## Minacce e mitigazioni
+## Threats and mitigations
 
-| # | Minaccia | Mitigazione implementata | Limite residuo |
+| # | Threat | Implemented mitigation | Residual limit |
 |---|---|---|---|
-| 1 | MITM/sostituzione dei binari | Pin versione + **sha256 hardcoded fail-closed**, solo HTTPS, mismatch = abort | Firma GPG non ancora integrata (roadmap) |
-| 2 | Registrazione di nodi falsi | Token **monouso** (TTL 24h, hash at-rest), rate-limit per IP | Il token è consegnato a mano (canale sicuro a carico dell'operatore) |
-| 3 | Furto/riuso token | Single-use, scadenza, `410` su riuso; il 409 **non** consuma il token | |
-| 4 | Impersonificazione del nodo (GET/DELETE) | `node_secret` 256-bit, confronto **constant-time**, rotazione self-service | Enumerazione ID mitigata da ID casuali (128 bit) |
-| 5 | Attaccante locale sul server utente | File 600, niente segreti nei log, niente sudo, rune least-privilege | Esecuzione user-level: un root locale può sempre leggere i file |
-| 6 | CP compromesso | Il CP **non può** muovere fondi né comandare nodi: zero credenziali verso i server, solo hash e dati pseudonimi | Dati (pubkey/relay) leggibili da chi compromette il CP |
-| 7 | CP irraggiungibile (down/offline) | Install **offline-ok**; registrazione differibile (`--register`); il nodo vive senza CP | |
-| 8 | X-Forwarded-For spoofing | `TRUST_PROXY=0` di default; `1` solo dietro proxy che riscrive l'header | Se malconfigurato il rate-limit per IP è aggirabile (impatto basso: protegge da abusi, non da brute-force su 256-bit) |
-| 9 | Supply chain installer | `set -euo pipefail`, shellcheck in CI/test, nessun `sudo`, quoting rigoroso | |
-| 10 | Flood/DoS | Rate-limit per IP con `Retry-After`, body ≤8KB | In-memory: si azzera al riavvio (accettato) |
+| 1 | MITM/binary replacement | Pinned version + **hardcoded fail-closed sha256**, HTTPS only, mismatch = abort | GPG signature not integrated yet (roadmap) |
+| 2 | Registration of fake nodes | **Single-use** token (TTL 24h, hash at-rest), per-IP rate-limit | The token is delivered by hand (secure channel is the operator's responsibility) |
+| 3 | Token theft/reuse | Single-use, expiry, `410` on reuse; a 409 does **not** consume the token | |
+| 4 | Node impersonation (GET/DELETE) | `node_secret` 256-bit, **constant-time** comparison, self-service rotation | ID enumeration mitigated by random IDs (128 bit) |
+| 5 | Local attacker on the user server | Files 600, no secrets in logs, no sudo, least-privilege rune | User-level execution: a local root can always read the files |
+| 6 | Compromised CP | The CP **cannot** move funds or command nodes: zero credentials toward servers, only hashes and pseudonymous data | Data (pubkey/relay) readable by whoever compromises the CP |
+| 7 | CP unreachable (down/offline) | Install **offline-ok**; deferred registration (`--register`); the node lives without the CP | |
+| 8 | X-Forwarded-For spoofing | `TRUST_PROXY=0` by default; `1` only behind a proxy that rewrites the header | If misconfigured, per-IP rate-limit is bypassable (low impact: protects against abuse, not against brute-force on 256-bit) |
+| 9 | Installer supply chain | `set -euo pipefail`, shellcheck in CI/tests, no `sudo`, strict quoting | |
+| 10 | Flood/DoS | Per-IP rate-limit with `Retry-After`, body ≤8KB | In-memory: resets on restart (accepted) |
 
-## Dichiarazioni esplicite (da non dimenticare)
+## Explicit statements (not to be forgotten)
 
-- **Nessuna custodia**: il CP non firma, non muove fondi, non opera sui nodi.
-- **Outbound-only**: il CP non contatta mai i server degli utenti; ogni azione
-  sul nodo (revoca URI, stop, uninstall) è **locale** via installer.
-- **Dati minimi**: pubkey/relay/alias/versione/timestamp + hash. Mai seed,
-  rune, credenziali RPC o PII.
-- **Feature bit 68 / SIGHASH_UNIFIED**: sperimentali, **mai implementati qui**
-  (solo menzionati). Nessun supporto finché il formato non si stabilizza.
+- **No custody**: the CP does not sign, does not move funds, does not operate nodes.
+- **Outbound-only**: the CP never contacts users' servers; every action
+  on the node (URI revocation, stop, uninstall) is **local** via the installer.
+- **Minimal data**: pubkey/relay/alias/version/timestamp + hashes. Never seeds,
+  runes, RPC credentials or PII.
+- **Feature bit 68 / SIGHASH_UNIFIED**: experimental, **never implemented here**
+  (only mentioned). No support until the format stabilizes.
 
-## Roadmap sicurezza
+## Security roadmap
 
-1. Verifica **GPG** dei `SHA256SUMS` upstream integrata nell'installer (chiave upstream pinnata).
-2. **Firma delle release** del bridge (`btc-blake2b-control-plane`) e verifica GPG nel deploy.
-3. Autenticazione **challenge-response BIP340** (pubkey del nodo) come alternativa al `node_secret` — il campo `bridgePubkey` è già registrato per questo.
-4. Retention log documentata per il deploy del CP (consigliato: 30 giorni, senza contenuti).
+1. **GPG** verification of upstream `SHA256SUMS` integrated into the installer (pinned upstream key).
+2. **Release signing** of the bridge (`btc-blake2b-control-plane`) and GPG verification in deploy.
+3. **BIP340 challenge-response** authentication (node pubkey) as an alternative to `node_secret` — the `bridgePubkey` field is already stored for this.
+4. Documented log retention for the CP deploy (recommended: 30 days, without contents).

@@ -1,55 +1,56 @@
 # btc-blake2b-control-plane
 
-> Infrastruttura di supporto **self-hosted opt-in** per nodi Lightning su **bitcoin-blake2b**:
-> un **control plane** (registro di provisioning outbound) e un **installer assistito**
-> per installare Core Lightning (fork blake2b) + bridge NWC/NCC sul proprio server.
-> NON è un wallet e NON è un servizio di custodia: le chiavi restano dell'utente.
+> **Self-hosted, opt-in** support infrastructure for Lightning nodes on **bitcoin-blake2b**:
+> a **control plane** (outbound provisioning registry) and an **assisted installer**
+> to set up Core Lightning (blake2b fork) + NWC/NCC bridge on your own server.
+> It is NOT a wallet and NOT a custody service: keys always stay with the user.
 
-**Stato Fase 1**: A1–A5 ✓ completata. **Release `v0.2.0`** del pacchetto di installazione pubblicata (installer + bridge, asset verificabili via `SHA256SUMS`).
+**Phase 1 status**: A1–A5 ✓ completed. **Release `v0.2.1`** of the installation package published (installer + bridge, assets verifiable via `SHA256SUMS`).
 
-## Architettura
+## Architecture
 
 ```
-[App wallet Flutter] ── NWC/NCC (Nostr) ──▶ [Bridge] ── clnrest ──▶ [CLN fork blake2b]   (server dell'utente)
-                                                 ▲
-[server dell'utente] ── registrazione (token monouso, HTTPS) ──▶ [Control plane]         (registro)
+[Flutter wallet app] ── NWC/NCC (Nostr) ──▶ [Bridge] ── clnrest ──▶ [CLN blake2b fork]   (user's server)
+                                                ▲
+[user's server] ── registration (single-use token, HTTPS) ──▶ [Control plane]           (registry)
 ```
 
-- L'installer gira **sul server dell'utente**; il control plane **non ha mai accesso** ai server.
-- Il CP conserva solo dati **pseudonimi** (pubkey bridge, relay, alias, versione, timestamp):
-  mai seed, mai rune, mai credenziali di accesso.
-- La revoca di un URI NWC è **locale** (allowlist del bridge, via installer), non remota.
-- Modello di fiducia completo: `docs/THREAT_MODEL.md` (A4) · ADR: `DECISIONS.md` nel repo wallet.
+- The installer runs **on the user's server**; the control plane **never has access** to servers.
+- The CP stores only **pseudonymous** data (bridge pubkey, relay, alias, version, timestamp):
+  never seeds, never runes, never access credentials.
+- Revoking an NWC URI is **local** (bridge allowlist, via installer), not remote.
+- Full trust model: `docs/THREAT_MODEL.md` (A4) · ADRs: `DECISIONS.md` in the wallet repo.
 
-## Non-obiettivi (fuori scope, da non dimenticare)
+## Non-goals (out of scope, not to be forgotten)
 
-- **Nessuna custodia**: il CP non firma, non muove fondi, non opera sui nodi.
-- **Feature bit sperimentali**: il bit 68 (required) e SIGHASH_UNIFIED delle build community
-  sono **sperimentali e NON presenti nel `.3` ufficiale** (`privkeyio/lightning`).
-  Qui sono **solo menzionati, mai implementati**.
-- **Upgrade del nodo live `.2` → `.3`**: **fuori scope** di questa Fase 1 (decisione separata:
-  backup di `lightningd.sqlite3`/`hsm_secret`/`emergency.recover` + `--database-upgrade=true`, one-way).
-- **Signer remoto**: è la **Fase 2** (feasibility study, nella memoria condivisa del wallet).
-  Dovrà gestire SIGHASH_UNIFIED, ma il contratto definitivo attende la **stabilizzazione del formato**.
+- **No custody**: the CP does not sign, does not move funds, does not operate nodes.
+- **Experimental feature bits**: bit 68 (required) and SIGHASH_UNIFIED from community builds
+  are **experimental and NOT present in official `.3`** (`privkeyio/lightning`).
+  Here they are **only mentioned, never implemented**.
+- **Live node upgrade `.2` → `.3`**: **out of scope** of this Phase 1 (separate decision:
+  backup of `lightningd.sqlite3`/`hsm_secret`/`emergency.recover` + `--database-upgrade=true`, one-way).
+- **Remote signer**: it is **Phase 2** (feasibility study, in the wallet's shared memory).
+  It will have to handle SIGHASH_UNIFIED, but the final contract waits for the **format to stabilize**.
 
 ## Release
 
-- **Installer**: `tlw-node-installer-0.2.0.tar.gz` — dalla GitHub Release `v0.2.0` (con `SHA256SUMS`); guida: `docs/INSTALLER.md`.
-- **Bridge**: `bridge-exe-linux-amd64` (stessa release) — buildato dal sorgente in `bridge/` con `scripts/build-bridge-release.sh` (Dart 3.13.3; sorgente incluso e ricostruibile).
-- Packaging: `scripts/package-installer.sh` · pubblicazione: `scripts/publish-release.ps1`.
+- **Installer**: `tlw-node-installer-0.2.1.tar.gz` — from the GitHub Release `v0.2.1` (with `SHA256SUMS`); guide: `docs/INSTALLER.md`.
+- **Bridge**: `bridge-exe-linux-amd64` (same release) — built from the source in `bridge/` with `scripts/build-bridge-release.sh` (Dart 3.13.3; source included and rebuildable).
+- Packaging: `scripts/package-installer.sh` · publishing: `scripts/publish-release.ps1`.
 
-## Struttura
+## Structure
 
 - `server/` — control plane (Dart: `shelf` + SQLite; admin CLI)
-- `installer/` — installer bash + test Docker (matrice Ubuntu; Debian documentato)
-- `bridge/` — sorgente del bridge NWC/NCC (snapshot di release; sviluppo primario nel repo wallet)
-- `scripts/` — build bridge, packaging installer, pubblicazione release
+- `installer/` — bash installer + Docker tests (Ubuntu matrix; Debian documented)
+- `bridge/` — NWC/NCC bridge source (release snapshot; primary development in the wallet repo)
+- `scripts/` — bridge build, installer packaging, release publishing
 - `docs/` — `INSTALLER.md` · `CONTROL_PLANE.md` · `THREAT_MODEL.md` · `REVOCATION.md` · `SIGNER-CONTRACT.md`
-- `.github/` — convenzioni + agente `@loop-engineer` + skill `loop-engineering`
+- `.github/` — conventions + `@loop-engineer` agent + `loop-engineering` skill
 
-## Riferimenti
+## References
 
-- Wallet (client NWC/NCC + bridge): repo `btc-blake2b-wallet`
-- Memoria condivisa del progetto: `btc-blake2b-wallet/docs/ai-memory/` (`DECISIONS.md`, `domain/lightning-network.md`)
-- Fork CLN: `privkeyio/lightning` — release corrente `v26.06.7-blake2b.3` (db 284; `.2` superseded/do-not-use)
-- Full node blake2b: `DarkWebDivingClub/bitcoin-knots`
+- Wallet (NWC/NCC client + bridge): `btc-blake2b-wallet` repo
+- Project shared memory: `btc-blake2b-wallet/docs/ai-memory/` (`DECISIONS.md`, `domain/lightning-network.md`)
+- CLN fork: `privkeyio/lightning` — installer pin `v26.06.7-blake2b.3` (db 284; `.2` superseded/do-not-use).
+  The newer `.4` adds a mandatory bit-68 peering gate (see the bridge README).
+- blake2b full node: `DarkWebDivingClub/bitcoin-knots`
