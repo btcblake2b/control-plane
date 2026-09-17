@@ -14,6 +14,9 @@ dependencies:
   crypto: ^3.0.3
   http: ^1.3.0
   pointycastle: ^3.9.1
+  # PERCHÉ: QR della URI NWC generato server-side (nessun asset/JS esterno
+  # nella pagina di stato → privacy e CSP pulita).
+  qr: ^3.0.2
   web_socket_channel: ^3.0.3
 
 dev_dependencies:

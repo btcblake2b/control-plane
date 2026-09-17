@@ -38,11 +38,16 @@ installation still completes and can register later
 
 | Component | Source |
 |---|---|
-| Core Lightning blake2b fork `v26.06.7-blake2b.3` | upstream binaries (pin) |
-| `bridge-exe-linux-amd64` | release `v0.2.1` of this project (pin) |
+| Core Lightning blake2b fork `v26.06.7-blake2b.4` | upstream binaries (pin) |
+| `bridge-exe-linux-amd64` | release `v0.3.0` of this project (pin) |
 | `libpq5` | apt repository (user-level extraction via `apt-get download`) |
 
 A mismatched checksum **aborts** the installation.
+
+**Note on `.4`**: it signals `option_blake2b` (bit 68) as **mandatory** in `init` —
+the node peers only with other `.4` nodes, and the wire protocol is provisional
+(channels may need closing/reopening if the bit numbering changes). Close your
+channels before upgrading an existing node.
 
 ## Useful commands
 

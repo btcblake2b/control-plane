@@ -213,7 +213,9 @@ class BridgeService {
       response = {
         'result_type': null,
         'result': null,
-        'error': {'code': 'OTHER', 'message': '$e'},
+        // PERCHÉ (NIP-XX): `INTERNAL` è il codice spec per un errore non
+        // classificato; `OTHER` resta per gli errori applicativi di dominio.
+        'error': {'code': 'INTERNAL', 'message': '$e'},
       };
     }
 

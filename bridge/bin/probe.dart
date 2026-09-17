@@ -113,11 +113,7 @@ Future<void> main(List<String> args) async {
       'list_invoices',
       const <String, dynamic>{'limit': 3}
     ),
-    (
-      Protocol.nwcRequestKind,
-      'list_pays',
-      const <String, dynamic>{'limit': 3}
-    ),
+    (Protocol.nwcRequestKind, 'list_pays', const <String, dynamic>{'limit': 3}),
     (Protocol.nwcRequestKind, 'get_pending_htlcs', const <String, dynamic>{}),
     (
       Protocol.nwcRequestKind,
@@ -125,7 +121,12 @@ Future<void> main(List<String> args) async {
       const <String, dynamic>{}
     ),
     (Protocol.nccRequestKind, 'get_node_stats', const <String, dynamic>{}),
-    (Protocol.nccRequestKind, 'list_forwards', const <String, dynamic>{}),
+    // PERCHÉ (NIP-XX): la sonda parla i nomi canonici della spec.
+    (
+      Protocol.nccRequestKind,
+      'get_forwarding_history',
+      const <String, dynamic>{}
+    ),
     (
       Protocol.nwcRequestKind,
       'make_invoice',
@@ -206,36 +207,36 @@ Future<void> main(List<String> args) async {
       }
     }
     if (peerId == null) {
-      stdout.writeln('get_node_info → saltato (nessun canale)');
+      stdout.writeln('get_network_node → saltato (nessun canale)');
     } else {
       final info = await request(
         Protocol.nccRequestKind,
-        'get_node_info',
-        <String, dynamic>{'node_id': peerId},
+        'get_network_node',
+        <String, dynamic>{'pubkey': peerId},
       );
-      stdout.writeln('get_node_info → ${jsonEncode(info)}');
+      stdout.writeln('get_network_node → ${jsonEncode(info)}');
       if (info['error'] != null) {
         failures++;
       }
       if (routePeerId == null) {
-        stdout.writeln('get_route → saltato (nessun canale usabile)');
+        stdout.writeln('query_routes → saltato (nessun canale usabile)');
       } else {
         final route = await request(
           Protocol.nccRequestKind,
-          'get_route',
+          'query_routes',
           <String, dynamic>{
             'destination': routePeerId,
-            'amount_msat': 1000000,
+            'amount': 1000000,
           },
         );
-        stdout.writeln('get_route → ${jsonEncode(route)}');
+        stdout.writeln('query_routes → ${jsonEncode(route)}');
         if (route['error'] != null) {
           failures++;
         }
       }
     }
   } catch (e) {
-    stdout.writeln('get_node_info/get_route → FALLITO: $e');
+    stdout.writeln('get_network_node/query_routes → FALLITO: $e');
     failures++;
   }
 

@@ -31,15 +31,17 @@ class Protocol {
       'list_pays get_pending_htlcs keysend';
 
   /// Metodi dichiarati nell'evento info NCC (kind 13198).
-  /// // PERCHÉ (I3d): aggiunti `get_channel_fees`/`set_channel_fees`
-  /// (policy di routing del canale: base, ppm, limiti HTLC).
-  /// // PERCHÉ (I3e): aggiunti `get_node_stats` (economia + plugin),
-  /// `list_forwards` (routing), `get_node_info` e `get_route` (rete).
+  ///
+  /// // PERCHÉ (NIP-XX): annunciati i nomi canonici della spec Nostr Node
+  /// Control (get_forwarding_history / query_routes / get_network_node); i
+  /// nomi storici restano accettati come alias dal dispatcher, così le app
+  /// non ancora aggiornate continuano a funzionare. `get_node_stats` non ha
+  /// equivalente nella spec: resta un'estensione di questo bridge.
   static const String nccInfoContent =
       'list_channels open_channel close_channel '
       'connect_peer disconnect_peer list_peers '
       'get_channel_fees set_channel_fees '
-      'get_node_stats list_forwards get_node_info get_route';
+      'get_node_stats get_forwarding_history query_routes get_network_node';
 
   /// Notifiche annunciate negli eventi info (parità con la spec dln-node).
   static const List<String> nwcNotifications = [
@@ -56,7 +58,10 @@ class Protocol {
 class RpcError implements Exception {
   const RpcError(this.code, this.message);
 
-  /// Codici dalla spec dln-node: RESTRICTED, NOT_IMPLEMENTED, OTHER.
+  /// Codici NIP-XX (Nostr Node Control) e NIP-47 core: RESTRICTED,
+  /// NOT_IMPLEMENTED, UNAUTHORIZED, NOT_FOUND, BAD_REQUEST, CHANNEL_FAILED,
+  /// CONNECTION_FAILED, PAYMENT_FAILED, INSUFFICIENT_BALANCE, INTERNAL,
+  /// OTHER.
   final String code;
   final String message;
 

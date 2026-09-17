@@ -68,10 +68,16 @@ class NwcHandlers {
         return _setChannelFees(params);
       case 'get_node_stats':
         return _getNodeStats();
+      // PERCHÉ (NIP-XX): i nomi canonici della spec NNC (Nostr Node Control)
+      // sono accettati insieme a quelli storici — il bridge aggiornato serve
+      // sia le app nuove sia quelle già installate (zero breaking).
+      case 'get_forwarding_history':
       case 'list_forwards':
         return _listForwards(params);
+      case 'get_network_node':
       case 'get_node_info':
         return _getNodeInfo(params);
+      case 'query_routes':
       case 'get_route':
         return _getRoute(params);
       case 'keysend':
@@ -166,7 +172,10 @@ class NwcHandlers {
   ) async {
     final amount = (params['amount'] as num?)?.toInt();
     if (amount == null || amount <= 0) {
-      throw const RpcError('OTHER', 'make_invoice richiede amount (msat)');
+      throw const RpcError(
+        'BAD_REQUEST',
+        'make_invoice richiede amount (msat)',
+      );
     }
     final description = '${params['description'] ?? 'nwc-bridge'}';
     final label = 'nwcb-${DateTime.now().millisecondsSinceEpoch}'
@@ -190,9 +199,17 @@ class NwcHandlers {
   ) async {
     final bolt11 = params['invoice'] as String?;
     if (bolt11 == null || bolt11.isEmpty) {
-      throw const RpcError('OTHER', 'pay_invoice richiede invoice');
+      throw const RpcError('BAD_REQUEST', 'pay_invoice richiede invoice');
     }
-    final res = await cln.call('pay', {'bolt11': bolt11});
+    final Map<String, dynamic> res;
+    try {
+      res = await cln.call('pay', {'bolt11': bolt11});
+    } on RpcError catch (e) {
+      throw RpcError(
+        classifyClnFailure(e.message, fallback: 'PAYMENT_FAILED'),
+        e.message,
+      );
+    }
     final sent = (res['amount_sent_msat'] as num?)?.toInt() ?? 0;
     final amount = (res['amount_msat'] as num?)?.toInt() ?? 0;
     return {
@@ -210,12 +227,25 @@ class NwcHandlers {
   Future<Map<String, dynamic>> _makeNewAddress(
     Map<String, dynamic> params,
   ) async {
-    final requested = '${params['address_type'] ?? 'bech32'}';
+    // PERCHÉ (NIP-XX): il campo spec è `type` ("p2wpkh" | "p2tr" | …);
+    // `address_type` resta accettato dalle app non aggiornate. `p2wpkh` è il
+    // nome spec del nostro storico `bech32` (CLN: `newaddr bech32`).
+    final requested = '${params['type'] ?? params['address_type'] ?? 'bech32'}';
+    if (requested != 'p2wpkh' && requested != 'bech32' && requested != 'p2tr') {
+      throw RpcError(
+        'BAD_REQUEST',
+        'make_new_address: tipo non supportato "$requested" '
+            '(p2wpkh|bech32|p2tr)',
+      );
+    }
     final type = requested == 'p2tr' ? 'p2tr' : 'bech32';
     final res = await cln.call('newaddr', {'addresstype': type});
     final address = type == 'p2tr' ? res['p2tr'] : res['bech32'];
     if (address == null) {
-      throw const RpcError('OTHER', 'newaddr non ha restituito un indirizzo');
+      throw const RpcError(
+        'INTERNAL',
+        'newaddr non ha restituito un indirizzo',
+      );
     }
     return {'address': '$address', 'type': type};
   }
@@ -234,20 +264,39 @@ class NwcHandlers {
   ) async {
     final address = '${params['address'] ?? ''}';
     if (address.isEmpty) {
-      throw const RpcError('OTHER', 'pay_onchain richiede address');
+      throw const RpcError('BAD_REQUEST', 'pay_onchain richiede address');
     }
-    int? amountSats = (params['amount_sat'] as num?)?.toInt();
+    // PERCHÉ (NIP-XX nwc-units/nwc-onchain): il nome spec è `amount_sats`;
+    // `amount_sat` (nostro storico) e `amount` (msat, convenzione NIP-47)
+    // restano accettati per retro-compatibilità.
+    int? amountSats = (params['amount_sats'] as num?)?.toInt() ??
+        (params['amount_sat'] as num?)?.toInt();
     if (amountSats == null && params['amount'] is num) {
       // PERCHÉ: `amount` nella convenzione NIP-47 è in msat.
       amountSats = (params['amount'] as num).toInt() ~/ 1000;
     }
-    final feerate = params['feerate'] as String?;
+    // PERCHÉ (NIP-XX nwc-onchain): `feerate` è in sat/vB (numero); la stringa
+    // CLN legacy (`500perkw`) resta accettata. 1 sat/vB = 250 sat/kw.
+    final rawFeerate = params['feerate'];
+    final String? feerate = switch (rawFeerate) {
+      final num n when n > 0 => '${(n * 250).round()}perkw',
+      final String s when s.isNotEmpty => s,
+      _ => null,
+    };
     _logger.info('pay_onchain: $address, ${amountSats ?? 'ALL'} sat');
-    final res = await cln.call('withdraw', {
-      'destination': address,
-      if (amountSats != null) 'satoshi': '$amountSats' else 'all': true,
-      if (feerate != null && feerate.isNotEmpty) 'feerate': feerate,
-    });
+    final Map<String, dynamic> res;
+    try {
+      res = await cln.call('withdraw', {
+        'destination': address,
+        if (amountSats != null) 'satoshi': '$amountSats' else 'all': true,
+        if (feerate != null) 'feerate': feerate,
+      });
+    } on RpcError catch (e) {
+      throw RpcError(
+        classifyClnFailure(e.message, fallback: 'PAYMENT_FAILED'),
+        e.message,
+      );
+    }
     final txid = res['txid'];
     if (txid == null) {
       throw const RpcError('OTHER', 'withdraw non ha restituito un txid');
@@ -405,7 +454,7 @@ class NwcHandlers {
     final label = '${params['label'] ?? ''}'.trim();
     if (hash.isEmpty && label.isEmpty) {
       throw const RpcError(
-        'OTHER',
+        'BAD_REQUEST',
         'lookup_invoice richiede payment_hash o label',
       );
     }
@@ -415,7 +464,7 @@ class NwcHandlers {
     });
     final list = (res['invoices'] as List? ?? const []);
     if (list.isEmpty) {
-      throw const RpcError('OTHER', 'fattura non trovata');
+      throw const RpcError('NOT_FOUND', 'fattura non trovata');
     }
     return _mapInvoice((list.first as Map).cast<String, dynamic>());
   }
@@ -510,7 +559,7 @@ class NwcHandlers {
     final amount = (params['amount_msat'] as num?)?.toInt();
     if (destination.isEmpty || amount == null || amount <= 0) {
       throw const RpcError(
-        'OTHER',
+        'BAD_REQUEST',
         'keysend richiede destination e amount_msat positivi',
       );
     }
@@ -519,15 +568,23 @@ class NwcHandlers {
     final maxFeePercent = (params['maxfeepercent'] as num?)?.toDouble();
     final retryFor = (params['retry_for'] as num?)?.toInt();
 
-    final res = await cln.call('keysend', {
-      'destination': destination,
-      'amount_msat': amount,
-      if (label.isNotEmpty) 'label': label,
-      if (maxFee != null) 'maxfee': maxFee,
-      if (maxFee == null && maxFeePercent != null)
-        'maxfeepercent': maxFeePercent,
-      if (retryFor != null) 'retry_for': retryFor,
-    });
+    final Map<String, dynamic> res;
+    try {
+      res = await cln.call('keysend', {
+        'destination': destination,
+        'amount_msat': amount,
+        if (label.isNotEmpty) 'label': label,
+        if (maxFee != null) 'maxfee': maxFee,
+        if (maxFee == null && maxFeePercent != null)
+          'maxfeepercent': maxFeePercent,
+        if (retryFor != null) 'retry_for': retryFor,
+      });
+    } on RpcError catch (e) {
+      throw RpcError(
+        classifyClnFailure(e.message, fallback: 'PAYMENT_FAILED'),
+        e.message,
+      );
+    }
     final mapped = _mapPay(res);
     _logger.info(
       'keysend: ${_shortId(destination)} amount=$amount '
@@ -572,7 +629,7 @@ class NwcHandlers {
   ) async {
     final id = '${params['id'] ?? ''}'.trim();
     if (id.isEmpty) {
-      throw const RpcError('OTHER', 'get_channel_fees richiede id');
+      throw const RpcError('BAD_REQUEST', 'get_channel_fees richiede id');
     }
     final res = await cln.call('listpeerchannels');
     for (final c in (res['channels'] as List? ?? const [])) {
@@ -583,9 +640,9 @@ class NwcHandlers {
 
       // I nostri valori annunciati stanno in `updates.local` (verificato sul
       // nodo); base/ppm esistono anche a livello di canale → fallback.
-      final local =
-          ((ch['updates'] as Map?)?['local'] as Map?)?.cast<String, dynamic>() ??
-              const <String, dynamic>{};
+      final local = ((ch['updates'] as Map?)?['local'] as Map?)
+              ?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
       int? pick(String key, String fallbackKey) =>
           (local[key] as num?)?.toInt() ?? (ch[fallbackKey] as num?)?.toInt();
 
@@ -593,8 +650,11 @@ class NwcHandlers {
         'id': channelId,
         if (scid.isNotEmpty) 'short_channel_id': scid,
         'fee_base_msat': pick('fee_base_msat', 'fee_base_msat') ?? 0,
-        'fee_proportional_millionths':
-            pick('fee_proportional_millionths', 'fee_proportional_millionths') ?? 0,
+        'fee_proportional_millionths': pick(
+              'fee_proportional_millionths',
+              'fee_proportional_millionths',
+            ) ??
+            0,
         if (pick('htlc_minimum_msat', 'minimum_htlc_in_msat') != null)
           'htlc_min_msat': pick('htlc_minimum_msat', 'minimum_htlc_in_msat'),
         if (pick('htlc_maximum_msat', 'maximum_htlc_out_msat') != null)
@@ -609,7 +669,7 @@ class NwcHandlers {
           'to_self_delay': ch['our_to_self_delay'],
       };
     }
-    throw const RpcError('OTHER', 'canale non trovato');
+    throw const RpcError('NOT_FOUND', 'canale non trovato');
   }
 
   /// Aggiorna la policy di routing (spec dln `set_channel_fees` → `setchannel`).
@@ -622,7 +682,7 @@ class NwcHandlers {
   ) async {
     final id = '${params['id'] ?? ''}'.trim();
     if (id.isEmpty) {
-      throw const RpcError('OTHER', 'set_channel_fees richiede id');
+      throw const RpcError('BAD_REQUEST', 'set_channel_fees richiede id');
     }
     final base = (params['base_msat'] as num?)?.toInt();
     final ppm = (params['ppm'] as num?)?.toInt();
@@ -631,19 +691,27 @@ class NwcHandlers {
     final enforceDelay = (params['enforce_delay'] as num?)?.toInt();
     if (base == null && ppm == null && htlcMin == null && htlcMax == null) {
       throw const RpcError(
-        'OTHER',
+        'BAD_REQUEST',
         'set_channel_fees richiede almeno un valore (base_msat, ppm, htlc_min_msat, htlc_max_msat)',
       );
     }
 
-    final res = await cln.call('setchannel', {
-      'id': id,
-      if (base != null) 'feebase': base,
-      if (ppm != null) 'feeppm': ppm,
-      if (htlcMin != null) 'htlcmin': htlcMin,
-      if (htlcMax != null) 'htlcmax': htlcMax,
-      if (enforceDelay != null) 'enforcedelay': enforceDelay,
-    });
+    final Map<String, dynamic> res;
+    try {
+      res = await cln.call('setchannel', {
+        'id': id,
+        if (base != null) 'feebase': base,
+        if (ppm != null) 'feeppm': ppm,
+        if (htlcMin != null) 'htlcmin': htlcMin,
+        if (htlcMax != null) 'htlcmax': htlcMax,
+        if (enforceDelay != null) 'enforcedelay': enforceDelay,
+      });
+    } on RpcError catch (e) {
+      throw RpcError(
+        classifyClnFailure(e.message, fallback: 'NOT_FOUND'),
+        e.message,
+      );
+    }
     _logger.info(
       'set_channel_fees: $id (base=$base ppm=$ppm min=$htlcMin max=$htlcMax)',
     );
@@ -772,7 +840,8 @@ class NwcHandlers {
         if (ch['fee_base_msat'] != null) 'fee_base_msat': ch['fee_base_msat'],
         if (ch['fee_proportional_millionths'] != null)
           'fee_proportional_millionths': ch['fee_proportional_millionths'],
-        if (ch['spendable_msat'] != null) 'spendable_msat': ch['spendable_msat'],
+        if (ch['spendable_msat'] != null)
+          'spendable_msat': ch['spendable_msat'],
         if (ch['receivable_msat'] != null)
           'receivable_msat': ch['receivable_msat'],
         if (ch['peer_connected'] != null)
@@ -788,28 +857,46 @@ class NwcHandlers {
     Map<String, dynamic> params,
   ) async {
     final pubkey = '${params['pubkey'] ?? ''}';
-    final amount = (params['amount'] as num?)?.toInt();
+    // PERCHÉ (NIP-XX nwc-units): `amount_sats` è il nome spec; `amount` resta
+    // accettato dalle app non ancora aggiornate.
+    final amount = (params['amount_sats'] as num?)?.toInt() ??
+        (params['amount'] as num?)?.toInt();
     final host = params['host'] as String?;
     final isPrivate = params['private'] as bool? ?? false;
     if (pubkey.isEmpty || amount == null || amount <= 0) {
       throw const RpcError(
-        'OTHER',
-        'open_channel richiede pubkey e amount (sat)',
+        'BAD_REQUEST',
+        'open_channel richiede pubkey e amount_sats (sat)',
       );
     }
     // PERCHÉ: se il client fornisce l'host, il bridge fa anche il connect —
     // l'app non deve conoscere lo stato dei peer del nodo.
     if (host != null && host.isNotEmpty) {
-      await cln.call('connect', {'id': '$pubkey@$host'});
+      try {
+        await cln.call('connect', {'id': '$pubkey@$host'});
+      } on RpcError catch (e) {
+        throw RpcError(
+          classifyClnFailure(e.message, fallback: 'CONNECTION_FAILED'),
+          e.message,
+        );
+      }
     }
     _logger.info(
       'open_channel: $pubkey, $amount sat (private=$isPrivate)',
     );
-    final res = await cln.call('fundchannel', {
-      'id': pubkey,
-      'amount': '$amount',
-      'announce': !isPrivate,
-    });
+    final Map<String, dynamic> res;
+    try {
+      res = await cln.call('fundchannel', {
+        'id': pubkey,
+        'amount': '$amount',
+        'announce': !isPrivate,
+      });
+    } on RpcError catch (e) {
+      throw RpcError(
+        classifyClnFailure(e.message, fallback: 'CHANNEL_FAILED'),
+        e.message,
+      );
+    }
     return {
       if (res['txid'] != null) 'txid': res['txid'],
       if (res['channel_id'] != null) 'channel_id': res['channel_id'],
@@ -822,13 +909,21 @@ class NwcHandlers {
     final id = '${params['id'] ?? ''}';
     final force = params['force'] as bool? ?? false;
     if (id.isEmpty) {
-      throw const RpcError('OTHER', 'close_channel richiede id');
+      throw const RpcError('BAD_REQUEST', 'close_channel richiede id');
     }
-    final res = await cln.call('close', {
-      'id': id,
-      // PERCHÉ: unilateraltimeout=0 = chiusura forzata immediata (force).
-      if (force) 'unilateraltimeout': 0,
-    });
+    final Map<String, dynamic> res;
+    try {
+      res = await cln.call('close', {
+        'id': id,
+        // PERCHÉ: unilateraltimeout=0 = chiusura forzata immediata (force).
+        if (force) 'unilateraltimeout': 0,
+      });
+    } on RpcError catch (e) {
+      throw RpcError(
+        classifyClnFailure(e.message, fallback: 'CHANNEL_FAILED'),
+        e.message,
+      );
+    }
     return {
       if (res['tx'] != null) 'txid': res['tx'],
       if (res['txid'] != null) 'txid': res['txid'],
@@ -847,12 +942,18 @@ class NwcHandlers {
     for (final p in (res['peers'] as List? ?? const [])) {
       final peer = (p as Map).cast<String, dynamic>();
       final id = '${peer['id'] ?? ''}';
+      final addresses =
+          (peer['netaddr'] as List? ?? const []).map((a) => '$a').toList();
       out.add({
         'id': id,
+        // PERCHÉ (NIP-XX): `pubkey`/`address` sono i nomi spec — emessi in
+        // aggiunta ai nostri, così un client conforme legge lo stesso evento
+        // senza rompere le app già installate.
+        'pubkey': id,
+        if (addresses.isNotEmpty) 'address': addresses.first,
         'connected': peer['connected'] as bool? ?? false,
         'num_channels': (peer['num_channels'] as num?)?.toInt() ?? 0,
-        'addresses':
-            (peer['netaddr'] as List? ?? const []).map((a) => '$a').toList(),
+        'addresses': addresses,
         if (peer['remote_addr'] != null) 'remote_addr': peer['remote_addr'],
       });
     }
@@ -882,14 +983,25 @@ class NwcHandlers {
       }
     }
     if (id.isEmpty) {
-      throw const RpcError('OTHER', 'connect_peer richiede id (pubkey)');
+      throw const RpcError(
+        'BAD_REQUEST',
+        'connect_peer richiede id (pubkey)',
+      );
     }
     _logger.info('connect_peer: $id${host.isEmpty ? '' : ' @ $host'}');
-    final res = await cln.call('connect', {
-      'id': id,
-      if (host.isNotEmpty) 'host': host,
-      if (port != null) 'port': port,
-    });
+    final Map<String, dynamic> res;
+    try {
+      res = await cln.call('connect', {
+        'id': id,
+        if (host.isNotEmpty) 'host': host,
+        if (port != null) 'port': port,
+      });
+    } on RpcError catch (e) {
+      throw RpcError(
+        classifyClnFailure(e.message, fallback: 'CONNECTION_FAILED'),
+        e.message,
+      );
+    }
     return {'id': '${res['id'] ?? id}'};
   }
 
@@ -899,14 +1011,24 @@ class NwcHandlers {
   ) async {
     final id = '${params['id'] ?? params['pubkey'] ?? ''}'.trim();
     if (id.isEmpty) {
-      throw const RpcError('OTHER', 'disconnect_peer richiede id (pubkey)');
+      throw const RpcError(
+        'BAD_REQUEST',
+        'disconnect_peer richiede id (pubkey)',
+      );
     }
     final force = params['force'] as bool? ?? false;
     _logger.info('disconnect_peer: $id (force=$force)');
-    await cln.call('disconnect', {
-      'id': id,
-      if (force) 'force': true,
-    });
+    try {
+      await cln.call('disconnect', {
+        'id': id,
+        if (force) 'force': true,
+      });
+    } on RpcError catch (e) {
+      throw RpcError(
+        classifyClnFailure(e.message, fallback: 'NOT_FOUND'),
+        e.message,
+      );
+    }
     return {'id': id};
   }
 
@@ -966,7 +1088,8 @@ class NwcHandlers {
           _mapPlugin((p as Map).cast<String, dynamic>()),
       ];
     } on RpcError catch (e) {
-      _logger.warn('get_node_stats: plugin list non disponibile (${e.message})');
+      _logger
+          .warn('get_node_stats: plugin list non disponibile (${e.message})');
     }
 
     var forwardCount = 0;
@@ -974,7 +1097,8 @@ class NwcHandlers {
       final res = await cln.call('listforwards');
       forwardCount = (res['forwards'] as List? ?? const []).length;
     } on RpcError catch (e) {
-      _logger.warn('get_node_stats: listforwards non disponibile (${e.message})');
+      _logger
+          .warn('get_node_stats: listforwards non disponibile (${e.message})');
     }
 
     return {
@@ -1019,30 +1143,55 @@ class NwcHandlers {
       return tb.compareTo(ta);
     });
 
+    // PERCHÉ (NIP-XX get_forwarding_history): `from`/`until` sono finestre
+    // temporali inclusive in secondi su `received_time`; il filtro è locale
+    // perché `listforwards` di CLN non le accetta.
+    final from = (params['from'] as num?)?.toInt();
+    final until = (params['until'] as num?)?.toInt();
+    final filtered = raw.where((e) {
+      final t = (e['received_time'] as num?)?.toInt() ?? 0;
+      if (from != null && t < from) return false;
+      if (until != null && t > until) return false;
+      return true;
+    }).toList();
+
     final rawLimit = (params['limit'] as num?)?.toInt() ?? 25;
     final limit = rawLimit < 1 ? 1 : (rawLimit > 100 ? 100 : rawLimit);
     final rawOffset = (params['offset'] as num?)?.toInt() ?? 0;
-    final offset =
-        rawOffset < 0 ? 0 : (rawOffset > raw.length ? raw.length : rawOffset);
+    final offset = rawOffset < 0
+        ? 0
+        : (rawOffset > filtered.length ? filtered.length : rawOffset);
 
     return {
       'forwards': [
-        for (final e in raw.skip(offset).take(limit)) _mapForward(e),
+        for (final e in filtered.skip(offset).take(limit)) _mapForward(e),
       ],
-      'total': raw.length,
+      'total': filtered.length,
     };
   }
 
   static Map<String, dynamic> _mapForward(Map<String, dynamic> e) => {
+        // PERCHÉ (NIP-XX): nomi campo spec di `get_forwarding_history`
+        // accanto ai nostri: nessuno rimosso, i client spec-li leggono i
+        // primi, le app installate i secondi.
         if (e['in_channel'] != null) 'in_channel': '${e['in_channel']}',
+        if (e['in_channel'] != null)
+          'incoming_channel_id': '${e['in_channel']}',
         if (e['out_channel'] != null) 'out_channel': '${e['out_channel']}',
+        if (e['out_channel'] != null)
+          'outgoing_channel_id': '${e['out_channel']}',
         'in_msat': (e['in_msat'] as num?)?.toInt() ?? 0,
+        'incoming_amount': (e['in_msat'] as num?)?.toInt() ?? 0,
         'out_msat': (e['out_msat'] as num?)?.toInt() ?? 0,
+        'outgoing_amount': (e['out_msat'] as num?)?.toInt() ?? 0,
         if (e['fee_msat'] != null)
           'fee_msat': (e['fee_msat'] as num?)?.toInt() ?? 0,
+        if (e['fee_msat'] != null)
+          'fee_earned': (e['fee_msat'] as num?)?.toInt() ?? 0,
         'status': '${e['status'] ?? 'unknown'}',
         if (e['received_time'] != null) 'received_time': e['received_time'],
         if (e['resolved_time'] != null) 'resolved_time': e['resolved_time'],
+        if (e['resolved_time'] != null) 'settled_at': e['resolved_time'],
       };
 
   /// Info sul nodo di rete (spec dln `get_node_info` → CLN `listnodes`).
@@ -1052,15 +1201,23 @@ class NwcHandlers {
   Future<Map<String, dynamic>> _getNodeInfo(
     Map<String, dynamic> params,
   ) async {
-    final nodeId = '${params['node_id'] ?? params['id'] ?? ''}'.trim();
+    // PERCHÉ (NIP-XX get_network_node): `pubkey` è il nome spec del parametro;
+    // `node_id`/`id` restano accettati dalle app non ancora aggiornate.
+    final nodeId =
+        '${params['pubkey'] ?? params['node_id'] ?? params['id'] ?? ''}'.trim();
     if (nodeId.isEmpty) {
-      throw const RpcError('OTHER', 'get_node_info richiede node_id');
+      throw const RpcError(
+        'BAD_REQUEST',
+        'get_network_node richiede pubkey',
+      );
     }
     final res = await cln.call('listnodes', {'id': nodeId});
     for (final n in (res['nodes'] as List? ?? const [])) {
       final node = (n as Map).cast<String, dynamic>();
       return {
         'node_id': '${node['nodeid'] ?? nodeId}',
+        // PERCHÉ (NIP-XX): alias spec dello stesso valore.
+        'pubkey': '${node['nodeid'] ?? nodeId}',
         if (node['alias'] != null) 'alias': '${node['alias']}',
         if (node['color'] != null) 'color': '${node['color']}',
         if (node['last_timestamp'] != null)
@@ -1072,7 +1229,7 @@ class NwcHandlers {
         ],
       };
     }
-    throw RpcError('OTHER', 'Nodo non trovato: $nodeId');
+    throw RpcError('NOT_FOUND', 'Nodo non trovato: $nodeId');
   }
 
   static Map<String, dynamic> _mapNodeAddress(Map<String, dynamic> a) => {
@@ -1091,19 +1248,32 @@ class NwcHandlers {
     Map<String, dynamic> params,
   ) async {
     final destination = '${params['destination'] ?? ''}'.trim();
-    final amount = (params['amount_msat'] as num?)?.toInt();
+    // PERCHÉ (NIP-XX query_routes): `amount` è il nome spec (msat, senza
+    // suffisso — regola nwc-units); `amount_msat` resta accettato. `max_routes`
+    // è accettato ma CLN `getroute` restituisce una sola rotta: valori > 1 non
+    // sono implementabili senza cambiare il motore.
+    final amount = (params['amount'] as num?)?.toInt() ??
+        (params['amount_msat'] as num?)?.toInt();
     if (destination.isEmpty || amount == null || amount <= 0) {
       throw const RpcError(
-        'OTHER',
-        'get_route richiede destination e amount_msat positivi',
+        'BAD_REQUEST',
+        'query_routes richiede destination e amount positivi (msat)',
       );
     }
     final risk = (params['risk_factor'] as num?)?.toInt() ?? 10;
-    final res = await cln.call('getroute', {
-      'id': destination,
-      'amount_msat': amount,
-      'riskfactor': risk,
-    });
+    final Map<String, dynamic> res;
+    try {
+      res = await cln.call('getroute', {
+        'id': destination,
+        'amount_msat': amount,
+        'riskfactor': risk,
+      });
+    } on RpcError catch (e) {
+      throw RpcError(
+        classifyClnFailure(e.message, fallback: 'NOT_FOUND'),
+        e.message,
+      );
+    }
 
     final hops = [
       for (final h in (res['route'] as List? ?? const []))
@@ -1253,6 +1423,36 @@ class NwcHandlers {
   }
 
   // ── Util ────────────────────────────────────────────────────────────────────
+
+  /// Classifica un fallimento CLN in un codice d'errore NIP-XX.
+  ///
+  /// // PERCHÉ: ClnApi incapsula ogni errore del nodo in RpcError('OTHER',
+  /// messaggio) — l'unico segnale disponibile è il testo. Il confronto è per
+  /// sottostringa (case-insensitive) e senza riscontro si ricade su
+  /// [fallback]: mai un codice inventato.
+  static String classifyClnFailure(
+    String message, {
+    required String fallback,
+  }) {
+    final m = message.toLowerCase();
+    if (m.contains('not found') ||
+        m.contains('unknown channel') ||
+        m.contains('no such') ||
+        m.contains('does not exist')) {
+      return 'NOT_FOUND';
+    }
+    if (m.contains('insufficient')) {
+      return 'INSUFFICIENT_BALANCE';
+    }
+    if (m.contains('could not connect') ||
+        m.contains('connection refused') ||
+        m.contains('connection timed out') ||
+        m.contains('unreachable') ||
+        m.contains('not connected')) {
+      return 'CONNECTION_FAILED';
+    }
+    return fallback;
+  }
 
   /// Mappa gli stati CLN sugli stati ldk-node attesi dal client.
   static String mapState(String clnState) {

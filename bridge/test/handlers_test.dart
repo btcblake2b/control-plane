@@ -26,6 +26,27 @@ class FakeCln implements ClnApi {
   }
 }
 
+/// Nodo CLN che fallisce i comandi indicati: serve a verificare la mappatura
+/// dei messaggi CLN sui codici d'errore NIP-XX.
+class ThrowingCln implements ClnApi {
+  ThrowingCln(this.failures);
+
+  /// comando CLN → messaggio d'errore del nodo.
+  final Map<String, String> failures;
+
+  @override
+  Future<Map<String, dynamic>> call(
+    String method, [
+    Map<String, dynamic> params = const {},
+  ]) async {
+    final msg = failures[method];
+    if (msg != null) {
+      throw RpcError('OTHER', msg);
+    }
+    return const {};
+  }
+}
+
 void main() {
   group('NwcHandlers', () {
     late FakeCln cln;
@@ -273,7 +294,7 @@ void main() {
       expect(
         () => handlers.handle('make_invoice', {}),
         throwsA(
-          isA<RpcError>().having((e) => e.code, 'code', 'OTHER'),
+          isA<RpcError>().having((e) => e.code, 'code', 'BAD_REQUEST'),
         ),
       );
     });
@@ -350,6 +371,187 @@ void main() {
       );
     });
 
+    // ── NIP-XX: alias dei metodi, unità e codici d'errore ───────────────────
+
+    test('get_forwarding_history è alias di list_forwards (+from/until)',
+        () async {
+      final h = NwcHandlers(
+        cln: FakeCln({
+          'listforwards': {
+            'forwards': [
+              {
+                'in_channel': 'a',
+                'out_channel': 'b',
+                'in_msat': 10,
+                'out_msat': 9,
+                'fee_msat': 1,
+                'received_time': 100,
+                'status': 'settled',
+              },
+              {
+                'in_channel': 'c',
+                'out_channel': 'd',
+                'in_msat': 20,
+                'out_msat': 19,
+                'fee_msat': 1,
+                'received_time': 200,
+                'status': 'settled',
+              },
+            ],
+          },
+        }),
+      );
+      final a = await h.handle('list_forwards', {});
+      final b = await h.handle('get_forwarding_history', {});
+      expect(b['forwards'], a['forwards']);
+      expect(b['total'], a['total']);
+      // Campi spec accanto ai nostri (il primo è il più recente: t=200).
+      final f = (b['forwards'] as List).first as Map<String, dynamic>;
+      expect(f['incoming_channel_id'], 'c');
+      expect(f['outgoing_amount'], 19);
+      expect(f['fee_earned'], 1);
+      // Finestra temporale inclusiva.
+      final window = await h.handle('get_forwarding_history', {
+        'from': 100,
+        'until': 100,
+      });
+      expect((window['forwards'] as List), hasLength(1));
+      final empty = await h.handle('get_forwarding_history', {'from': 201});
+      expect(empty['forwards'], isEmpty);
+      expect(empty['total'], 0);
+    });
+
+    test('query_routes è alias di get_route e accetta amount (spec)', () async {
+      final cln = FakeCln({
+        'getroute': {
+          'route': [
+            {'id': '02cc', 'channel': '100x1x1', 'amount_msat': 1001000},
+          ],
+        },
+      });
+      final r = await NwcHandlers(cln: cln).handle('query_routes', {
+        'destination': '02cc',
+        'amount': 1000000,
+      });
+      expect(cln.callParams.last['amount_msat'], 1000000);
+      expect(r['fee_msat'], 1000);
+    });
+
+    test('get_network_node è alias di get_node_info e accetta pubkey',
+        () async {
+      final cln = FakeCln({
+        'listnodes': {
+          'nodes': [
+            {'nodeid': '02bb', 'alias': 'Paperclip'},
+          ],
+        },
+      });
+      final r = await NwcHandlers(cln: cln).handle(
+        'get_network_node',
+        {'pubkey': '02bb'},
+      );
+      expect(cln.callParams.last['id'], '02bb');
+      expect(r['pubkey'], '02bb');
+      expect(r['node_id'], r['pubkey']);
+    });
+
+    test('open_channel accetta amount_sats (spec)', () async {
+      final cln = FakeCln({
+        'fundchannel': {'txid': 'ftx'},
+      });
+      await NwcHandlers(cln: cln).handle('open_channel', {
+        'pubkey': '02bf',
+        'amount_sats': 16000,
+      });
+      expect(cln.callParams.last['amount'], '16000');
+    });
+
+    test('pay_onchain accetta amount_sats e feerate in sat/vB', () async {
+      final cln = FakeCln({
+        'withdraw': {'txid': 'wtx1'},
+      });
+      await NwcHandlers(cln: cln).handle('pay_onchain', {
+        'address': 'bc1qdest',
+        'amount_sats': 12345,
+        'feerate': 2,
+      });
+      final params = cln.callParams.last;
+      expect(params['satoshi'], '12345');
+      // 2 sat/vB = 500 sat/kw (perkw) — conversione del bridge, non dell'app.
+      expect(params['feerate'], '500perkw');
+    });
+
+    test('make_new_address accetta type p2wpkh (spec) → bech32', () async {
+      final cln = FakeCln({
+        'newaddr': {'bech32': 'bc1qspec'},
+      });
+      final r = await NwcHandlers(cln: cln).handle(
+        'make_new_address',
+        {'type': 'p2wpkh'},
+      );
+      expect(cln.callParams.last['addresstype'], 'bech32');
+      expect(r['address'], 'bc1qspec');
+    });
+
+    test('make_new_address con type sconosciuto → BAD_REQUEST', () async {
+      expect(
+        () => handlers.handle('make_new_address', {'type': 'p2sh'}),
+        throwsA(isA<RpcError>().having((e) => e.code, 'code', 'BAD_REQUEST')),
+      );
+    });
+
+    test('errori CLN mappati sui codici NIP-XX', () async {
+      Future<void> expectCode(
+        String method,
+        Map<String, dynamic> params,
+        String clnMethod,
+        String message,
+        String code,
+      ) async {
+        final h = NwcHandlers(cln: ThrowingCln({clnMethod: message}));
+        await expectLater(
+          h.handle(method, params),
+          throwsA(isA<RpcError>().having((e) => e.code, 'code', code)),
+        );
+      }
+
+      await expectCode(
+        'close_channel',
+        {'id': 'fx9'},
+        'close',
+        'Unknown channel fx9',
+        'NOT_FOUND',
+      );
+      await expectCode(
+        'connect_peer',
+        {'id': '02bf', 'host': '1.2.3.4'},
+        'connect',
+        'Could not connect to peer',
+        'CONNECTION_FAILED',
+      );
+      await expectCode(
+        'open_channel',
+        {'pubkey': '02bf', 'amount_sats': 1000},
+        'fundchannel',
+        'Could not fund channel',
+        'CHANNEL_FAILED',
+      );
+      await expectCode(
+        'pay_onchain',
+        {'address': 'bc1q', 'amount_sats': 1},
+        'withdraw',
+        'Insufficient funds',
+        'INSUFFICIENT_BALANCE',
+      );
+      await expectCode(
+        'query_routes',
+        {'destination': '02cc', 'amount': 1},
+        'getroute',
+        'Could not find a route',
+        'NOT_FOUND',
+      );
+    });
+
     test('make_new_address mappa newaddr → address', () async {
       final r = await handlers.handle('make_new_address', {});
       expect(r['address'], 'bc1qtestaddress000000000000000000000');
@@ -387,7 +589,7 @@ void main() {
     test('pay_onchain senza address → errore', () async {
       expect(
         () => handlers.handle('pay_onchain', {}),
-        throwsA(isA<RpcError>().having((e) => e.code, 'code', 'OTHER')),
+        throwsA(isA<RpcError>().having((e) => e.code, 'code', 'BAD_REQUEST')),
       );
     });
 
@@ -482,7 +684,7 @@ void main() {
     test('connect_peer senza id → errore', () async {
       expect(
         () => handlers.handle('connect_peer', {}),
-        throwsA(isA<RpcError>().having((e) => e.code, 'code', 'OTHER')),
+        throwsA(isA<RpcError>().having((e) => e.code, 'code', 'BAD_REQUEST')),
       );
     });
 
@@ -556,7 +758,9 @@ void main() {
 
     test('pollNotifications: channel_opened sui canali comparsi', () async {
       final fake = FakeCln(baseResponses());
-      fake.responses['listpeerchannels'] = {'channels': <Map<String, dynamic>>[]};
+      fake.responses['listpeerchannels'] = {
+        'channels': <Map<String, dynamic>>[],
+      };
       final h = NwcHandlers(cln: fake);
       await h.pollNotifications();
       fake.responses['listpeerchannels'] = {
@@ -577,7 +781,9 @@ void main() {
       final fake = FakeCln(baseResponses());
       final h = NwcHandlers(cln: fake);
       await h.pollNotifications();
-      fake.responses['listpeerchannels'] = {'channels': <Map<String, dynamic>>[]};
+      fake.responses['listpeerchannels'] = {
+        'channels': <Map<String, dynamic>>[],
+      };
       final n = await h.pollNotifications();
       expect(n.where((e) => e.type == 'channel_closed'), isNotEmpty);
     });
@@ -664,7 +870,8 @@ void main() {
       expect((zero['transactions'] as List), hasLength(1));
     });
 
-    test('list_transactions: tag ignoto → other, default sugli assenti', () async {
+    test('list_transactions: tag ignoto → other, default sugli assenti',
+        () async {
       final custom = FakeCln({
         ...baseResponses(),
         'bkpr-listaccountevents': {
@@ -967,7 +1174,7 @@ void main() {
     test('lookup_invoice senza parametri → errore', () async {
       expect(
         () => handlers.handle('lookup_invoice', {}),
-        throwsA(isA<RpcError>().having((e) => e.code, 'code', 'OTHER')),
+        throwsA(isA<RpcError>().having((e) => e.code, 'code', 'BAD_REQUEST')),
       );
     });
 
@@ -980,7 +1187,8 @@ void main() {
         () => NwcHandlers(cln: custom)
             .handle('lookup_invoice', {'payment_hash': 'zz'}),
         throwsA(
-          isA<RpcError>().having((e) => e.message, 'message', contains('non trovata')),
+          isA<RpcError>()
+              .having((e) => e.message, 'message', contains('non trovata')),
         ),
       );
     });
@@ -1113,12 +1321,12 @@ void main() {
         ...baseResponses(),
         'listhtlcs': {'htlcs': <Map<String, dynamic>>[]},
       });
-      final r =
-          await NwcHandlers(cln: custom).handle('get_pending_htlcs', {});
+      final r = await NwcHandlers(cln: custom).handle('get_pending_htlcs', {});
       expect(r['htlcs'], isEmpty);
     });
 
-    test('get_channel_fees legge la policy annunciata (updates.local)', () async {
+    test('get_channel_fees legge la policy annunciata (updates.local)',
+        () async {
       final r = await handlers.handle('get_channel_fees', {'id': 'fx1'});
       expect(r['id'], 'fx1');
       expect(r['short_channel_id'], '100x1x1');
@@ -1136,17 +1344,20 @@ void main() {
       expect(r['id'], 'fx1');
     });
 
-    test('get_channel_fees: canale inesistente e id mancante → errore', () async {
+    test('get_channel_fees: canale inesistente e id mancante → errore',
+        () async {
       expect(
         () => handlers.handle('get_channel_fees', {'id': 'zz'}),
         throwsA(
-          isA<RpcError>().having((e) => e.message, 'message', contains('non trovato')),
+          isA<RpcError>()
+              .having((e) => e.message, 'message', contains('non trovato')),
         ),
       );
       expect(
         () => handlers.handle('get_channel_fees', {}),
         throwsA(
-          isA<RpcError>().having((e) => e.message, 'message', contains('richiede id')),
+          isA<RpcError>()
+              .having((e) => e.message, 'message', contains('richiede id')),
         ),
       );
     });
@@ -1180,14 +1391,18 @@ void main() {
       expect(
         () => handlers.handle('set_channel_fees', {'id': 'fx1'}),
         throwsA(
-          isA<RpcError>()
-              .having((e) => e.message, 'message', contains('almeno un valore')),
+          isA<RpcError>().having(
+            (e) => e.message,
+            'message',
+            contains('almeno un valore'),
+          ),
         ),
       );
       expect(
         () => handlers.handle('set_channel_fees', {'ppm': 10}),
         throwsA(
-          isA<RpcError>().having((e) => e.message, 'message', contains('richiede id')),
+          isA<RpcError>()
+              .having((e) => e.message, 'message', contains('richiede id')),
         ),
       );
     });
@@ -1195,7 +1410,10 @@ void main() {
     test('set_channel_fees riporta il warning del nodo', () async {
       final custom = FakeCln({
         ...baseResponses(),
-        'setchannel': {'channel_id': 'fx1', 'warning': 'htlcmin raised by peer'},
+        'setchannel': {
+          'channel_id': 'fx1',
+          'warning': 'htlcmin raised by peer',
+        },
       });
       final r = await NwcHandlers(cln: custom).handle('set_channel_fees', {
         'id': 'fx1',
@@ -1277,7 +1495,10 @@ void main() {
       expect(tags.first['tag'], 'deposit');
       expect(tags.first['entries'], 2);
       expect(tags.first['credit_msat'], 35606000);
-      expect(tags.map((t) => t['tag']), containsAll(['invoice', 'onchain_fee']));
+      expect(
+        tags.map((t) => t['tag']),
+        containsAll(['invoice', 'onchain_fee']),
+      );
 
       final plugins = (r['plugins'] as List).cast<Map<String, dynamic>>();
       expect(plugins.first['name'], 'keysend');
@@ -1394,7 +1615,8 @@ void main() {
         'listnodes': {'nodes': <dynamic>[]},
       });
       expect(
-        () => NwcHandlers(cln: custom).handle('get_node_info', {'node_id': 'zz'}),
+        () =>
+            NwcHandlers(cln: custom).handle('get_node_info', {'node_id': 'zz'}),
         throwsA(
           isA<RpcError>()
               .having((e) => e.message, 'message', contains('non trovato')),
@@ -1403,8 +1625,11 @@ void main() {
       expect(
         () => NwcHandlers(cln: custom).handle('get_node_info', {}),
         throwsA(
-          isA<RpcError>()
-              .having((e) => e.message, 'message', contains('richiede node_id')),
+          isA<RpcError>().having(
+            (e) => e.message,
+            'message',
+            contains('richiede pubkey'),
+          ),
         ),
       );
     });
@@ -1472,7 +1697,7 @@ void main() {
         () => handlers.handle('get_route', {'destination': '02aa'}),
         throwsA(
           isA<RpcError>()
-              .having((e) => e.message, 'message', contains('amount_msat')),
+              .having((e) => e.message, 'message', contains('amount')),
         ),
       );
     });

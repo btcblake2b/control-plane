@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 
+import '../config.dart';
 import '../logger.dart';
 import '../protocol.dart';
 
@@ -25,11 +28,75 @@ class ClnRestClient implements ClnApi {
   ClnRestClient({
     required this.baseUrl,
     required String rune,
+    SecurityContext? securityContext,
+    bool tlsInsecure = false,
     http.Client? httpClient,
     Logger? logger,
   })  : _rune = rune,
-        _http = httpClient ?? http.Client(),
+        _http = httpClient ??
+            _buildClient(
+              securityContext: securityContext,
+              insecure: tlsInsecure,
+            ),
         _logger = logger ?? Logger();
+
+  /// Costruisce il client HTTP applicando TLS solo quando serve.
+  /// // PERCHÉ: clnrest è http in locale (server di sviluppo, Start9) e https
+  /// con certificati self-signed altrove (app Umbrel): il trasporto va scelto
+  /// dalla configurazione, non hardcoded.
+  static http.Client _buildClient({
+    SecurityContext? securityContext,
+    required bool insecure,
+  }) {
+    if (securityContext == null && !insecure) {
+      return http.Client();
+    }
+    final ctx = securityContext ?? SecurityContext();
+    final client = HttpClient(context: ctx);
+    if (insecure) {
+      // // PERCHÉ: il certificato di clnrest è generato per l'IP/host interno
+      // e può non avere un SAN valido per il nome usato dal client.
+      client.badCertificateCallback = (cert, host, port) => true;
+    }
+    return IOClient(client);
+  }
+
+  /// Client costruito dalla config (url + rune + PEM opzionali).
+  ///
+  /// // PERCHÉ: un unico punto di costruzione evita che CLI, pagina di stato e
+  /// health check usino trasporti diversi.
+  static ClnRestClient fromConfig(
+    BridgeConfig config, {
+    http.Client? httpClient,
+    Logger? logger,
+  }) {
+    SecurityContext? ctx;
+    final ca = config.clnCaFile;
+    if (ca != null && ca.isNotEmpty && File(ca).existsSync()) {
+      ctx = SecurityContext()..setTrustedCertificates(ca);
+      final cert = config.clnClientCertFile;
+      final key = config.clnClientKeyFile;
+      // // PERCHÉ: se il nodo richiede mTLS i due PEM sono obbligatori
+      // insieme: uno solo dei due indica una configurazione incompleta.
+      if (cert != null && key != null) {
+        ctx.useCertificateChain(cert);
+        ctx.usePrivateKey(key);
+      }
+    } else if (config.usesTls) {
+      logger?.warn(
+        'clnUrl in https senza clnCaFile: il certificato del nodo deve essere '
+        'firmato da una CA di sistema',
+      );
+    }
+    return ClnRestClient(
+      baseUrl: config.clnUrl,
+      rune: config.loadRune(),
+      securityContext: ctx,
+      tlsInsecure: config.clnTlsInsecure,
+      httpClient: httpClient,
+      logger: logger,
+    );
+  }
 
   final String baseUrl;
   final String _rune;

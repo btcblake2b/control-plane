@@ -5,5 +5,11 @@
   "runeFile": "/home/filippo/.lightning/bridge-rune",
   "alias": "btcblake2b-bridge",
   "allowedClientPubkeys": [],
-  "logLevel": "info"
+  "logLevel": "info",
+  "uiPort": 0,
+  "uiToken": null,
+  "clnCaFile": null,
+  "clnClientCertFile": null,
+  "clnClientKeyFile": null,
+  "clnTlsInsecure": false
 }

@@ -9,24 +9,28 @@
 # nessun segreto (token, secret, rune, chiavi) viene mai loggato.
 set -euo pipefail
 
-INSTALLER_VERSION="0.2.1"
+INSTALLER_VERSION="0.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Pin di default (fail-closed) ────────────────────────────────────────────
-CLN_RELEASE_DEFAULT="v26.06.7-blake2b.3"
-# PERCHÉ .3 e NON .2: .2 è "superseded/do-not-use" (buildata da v26.06.6,
-# db 282; rifiuta i db 284 di v26.06.7). Vedi DECISIONS.md / dominio LN.
-CLN_SHA256_UBUNTU_2204="9d70d13eab72fe2b727d9070e5a0551280f8154c612f3bb2806c5d7ac9dcbb89"
-CLN_SHA256_UBUNTU_2404="439c9e79a4cfb4ed0560a79c5199b2b5006a1cbca6f800934a4e1bc25c3750c5"
-CLN_SHA256_UBUNTU_2604="80f53c3cfa95803257722f61d3f3948b9e816af80e1ee5e4ec33f3724020c0c8"
+CLN_RELEASE_DEFAULT="v26.06.7-blake2b.4"
+# PERCHÉ .4: prima release con unified sigs (SIGHASH_UNIFIED). ATTENZIONE:
+# segnala `option_blake2b` (bit 68) OBBLIGATORIO in `init` → il nodo peererà solo
+# con altri nodi `.4`; il wire protocol è provvisorio (i canali aperti potrebbero
+# dover essere chiusi/riaperti se la numerazione dei bit cambia).
+# NB: `.2` è "superseded/do-not-use" (db 282); `.3` (db 284) resta la release
+# senza unified sigs. Vedi DECISIONS.md / dominio LN e INSTALLER.md.
+CLN_SHA256_UBUNTU_2204="35e7001747f7fdf1cb0b38e75c39366a933285aa2ae2c2612d289f8a65369bd2"
+CLN_SHA256_UBUNTU_2404="5d95d09494fc076858109c83bffdc7ff2611083f7dba89ad0fc997c425d704eb"
+CLN_SHA256_UBUNTU_2604="0279b704d7f9677ed052d8be597532e65e60d281504f628505c80d9dbd0fab3d"
 
-# Bridge: release ufficiale dal repo btc-blake2b-control-plane (v0.2.1).
+# Bridge: release ufficiale dal repo btc-blake2b-control-plane (v0.3.0).
 # Pin ATTIVO: sha256 verificato fail-closed a ogni installazione. L'override
 # esplicito (--bridge-url/--bridge-sha256 + --allow-custom-urls) resta per
 # test/CI con artifact locali. Build riproducibile: scripts/build-bridge-release.sh.
-BRIDGE_RELEASE="v0.2.1"
+BRIDGE_RELEASE="v0.3.0"
 BRIDGE_URL_DEFAULT="https://github.com/btcblake2b/control-plane/releases/download/${BRIDGE_RELEASE}/bridge-exe-linux-amd64"
-BRIDGE_SHA256_DEFAULT="84659dc8b4668ca9635ffbc43369aef53d794646caa8cb21c7d477560327a25a"
+BRIDGE_SHA256_DEFAULT="41969a29f79d707ed81879acd8646180ee3591cf0ec16c6b4e7577774237d1b7"
 
 # ── Stato (default; sovrascrivibili dai flag) ───────────────────────────────
 MODE="install"

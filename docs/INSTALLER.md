@@ -8,7 +8,7 @@ your machine, the control plane never accesses it.
 ## Download and verification (end user)
 
 1. From the **Releases** page of `btcblake2b/control-plane` download:
-   - `tlw-node-installer-0.2.1.tar.gz` — the installation package
+   - `tlw-node-installer-0.3.0.tar.gz` — the installation package
    - `SHA256SUMS` — the checksums (package + bridge)
 2. Verify the package:
 
@@ -19,8 +19,8 @@ your machine, the control plane never accesses it.
 3. Extract and run:
 
    ```bash
-   tar -xzf tlw-node-installer-0.2.1.tar.gz
-   cd tlw-node-installer-0.2.1
+   tar -xzf tlw-node-installer-0.3.0.tar.gz
+   cd tlw-node-installer-0.3.0
    ./install.sh --bitcoind-rpc rpcuser:rpcpass@127.0.0.1:8332
    ```
 
@@ -81,7 +81,7 @@ clnrest port is also used by the **bridge config**, so it always talks to YOUR n
 ## What the installer does (steps)
 
 1. Preflight (OS/arch, commands). 2. bitcoind check (TCP). 3. CLN download
-`v26.06.7-blake2b.3` with **pinned sha256** → `~/cln-blake2b` (extraction
+`v26.06.7-blake2b.4` with **pinned sha256** → `~/cln-blake2b` (extraction
 **complete**: binaries in `usr/bin` + plugins in `usr/libexec` — without the
 plugins the node does not start correctly). 4. libpq5 user-level
 (`apt-get download` + `dpkg -x`). 5. CLN config (600) + start
@@ -105,12 +105,17 @@ rune (600). 8. Bridge download (sha256) + config (600) + `--genkey`/`--genuri`.
   project's GitHub Release and verifies the pinned sha256 (fail-closed). Custom
   artifacts (`--bridge-url/--bridge-sha256 --allow-custom-urls`) remain for tests/CI only.
 - `--skip-start` is **only for tests/CI** (does not start services).
-- **Node upgrade between fork releases** (e.g. `.2` → `.3`, `.3` → `.4`) is a
-  **separate procedure**: backup of `lightningd.sqlite3`, `hsm_secret`,
-  `emergency.recover`, then first start with `--database-upgrade=true` (**one-way**).
-- **Feature bit 68 / SIGHASH_UNIFIED**: experimental, NOT present in official `.3`.
-  The installer does not support them and will not install them until the format
-  is stable (see `SIGNER-CONTRACT.md`).
+- **Node upgrade between fork releases** (e.g. `.2`/`.3` → `.4`) is a **separate
+  procedure**: close your channels **first** (`.4` enforces bit 68 in `init`: a
+  cooperative close with a peer still on `.2`/`.3` is no longer possible), then
+  backup of `lightningd.sqlite3`, `hsm_secret`, `emergency.recover`, then first
+  start with `--database-upgrade=true` (**one-way**).
+- **Feature bit 68 / SIGHASH_UNIFIED**: the `.4` release the installer pins
+  signals `option_blake2b` (bit 68) as **mandatory** in `init` and adds unified
+  signatures. The bits are **not yet registered BOLT allocations** and may move:
+  channels opened under the current numbering may need closing/reopening. The
+  remote signer contract (Phase 2) still awaits format stabilization
+  (see `SIGNER-CONTRACT.md`).
 - Synology/QNAP NAS: not officially supported (community checklist); use only at your own risk.
 
 ## FAQ

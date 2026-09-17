@@ -1,13 +1,16 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:nwc_cln_bridge/src/bootstrap.dart';
 import 'package:nwc_cln_bridge/src/bridge_service.dart';
 import 'package:nwc_cln_bridge/src/cln/cln_api.dart';
+import 'package:nwc_cln_bridge/src/cln/reloadable_cln.dart';
 import 'package:nwc_cln_bridge/src/config.dart';
 import 'package:nwc_cln_bridge/src/handlers.dart';
 import 'package:nwc_cln_bridge/src/logger.dart';
 import 'package:nwc_cln_bridge/src/nostr/nostr_crypto.dart';
 import 'package:nwc_cln_bridge/src/nostr/websocket_transport.dart';
+import 'package:nwc_cln_bridge/src/web/status_server.dart';
 
 /// Entrypoint del bridge NWC/NCC ↔ CLN.
 ///
@@ -28,25 +31,35 @@ Future<void> main(List<String> args) async {
     return;
   }
 
-  final config = BridgeConfig.fromJsonFile(configPath);
+  // // PERCHÉ: nei container la config nasce da sola al primo avvio (dagli env)
+  // e poi resta nel volume: senza il flag il comportamento è invariato.
+  // // PERCHÉ (dal test in container del 16/09): nei package (Umbrel/Start9)
+  // non c'è un operatore davanti alla console — un errore di configurazione
+  // esce come messaggio chiaro + EX_CONFIG, non come stacktrace.
+  BridgeConfig config;
+  try {
+    config = opts.containsKey('ensure-config')
+        ? await ensureConfig(configPath: configPath)
+        : BridgeConfig.fromJsonFile(configPath);
+  } on FormatException catch (e) {
+    _configError(e);
+  }
+
+  if (opts.containsKey('health')) {
+    // // PERCHÉ: usato come health check del container/package: esce 0 solo se
+    // il nodo risponde davvero (rune valida + clnrest raggiungibile).
+    exit(await _health(config));
+  }
 
   if (opts.containsKey('genuri')) {
     // PERCHÉ: la secret è la chiave privata di sessione DEL CLIENT (NIP-47);
     // il bridge ne registra la pubkey per autorizzare solo quell'app.
-    final secret = NostrCrypto.randomHex32();
-    final clientPub = NostrCrypto.derivePublicKey(secret);
-    if (!config.allowedClientPubkeys.contains(clientPub)) {
-      config.allowedClientPubkeys.add(clientPub);
-      config.saveToFile(configPath);
-    }
-    final bridgePub = NostrCrypto.derivePublicKey(config.privkeyHex);
-    final relay = Uri.encodeComponent(config.relay);
-    final uri = 'nostr+walletconnect://$bridgePub?relay=$relay&secret=$secret';
+    final uri = await generateClientUri(
+      config: config,
+      configPath: configPath,
+    );
     stdout.writeln('URI NWC/NCC da incollare nell\'app:');
     stdout.writeln(uri);
-    stdout.writeln('');
-    stdout.writeln('Client pubkey autorizzata: $clientPub');
-    stdout.writeln('(salvata in $configPath)');
     return;
   }
 
@@ -57,10 +70,24 @@ Future<void> main(List<String> args) async {
     ),
   );
 
-  final rune = config.loadRune();
-  final cln = ClnRestClient(
-    baseUrl: config.clnUrl,
-    rune: rune,
+  // // PERCHÉ: se il nodo è configurato si prova SUBITO a costruire il client e
+  // a leggere la rune; se però rune/PEM sono temporaneamente assenti (su StartOS
+  // `Revoke Runes` cancella `.commando-env` prima di rigenerarla, e il file può
+  // non esistere per qualche secondo) il bridge NON deve morire in crash loop:
+  // continua, la pagina di stato segnala lo stato e il client viene ricostruito
+  // alla prima richiesta successiva.
+  ClnApi? initialCln;
+  if (config.clnUrl.isNotEmpty) {
+    try {
+      initialCln = ClnRestClient.fromConfig(config, logger: logger);
+    } catch (e) {
+      logger.warn('nodo configurato ma non utilizzabile ora: $e');
+      logger.warn('configura il nodo dalla pagina di stato');
+    }
+  }
+  final cln = ReloadableCln(
+    config: config,
+    initial: initialCln,
     logger: logger,
   );
   final transport = WebSocketTransport(logger: logger);
@@ -73,19 +100,68 @@ Future<void> main(List<String> args) async {
 
   await service.start();
 
+  // Pagina web di stato/configurazione (richiesta dalle app Umbrel: senza
+  // shell l'utente non avrebbe modo di leggere la stringa di connessione).
+  final uiPort = int.tryParse(opts['ui-port'] ?? '') ?? config.uiPort;
+  final uiToken = opts['ui-token'] ?? config.uiToken;
+  StatusServer? ui;
+  if (uiPort > 0) {
+    ui = StatusServer(
+      config: config,
+      configPath: configPath,
+      service: service,
+      cln: cln,
+      port: uiPort,
+      token: uiToken,
+      logger: logger,
+    );
+    await ui.start();
+  }
+
   ProcessSignal.sigint.watch().listen((_) async {
     logger.info('arresto richiesto (SIGINT)');
+    await ui?.stop();
     await service.stop();
     exit(0);
   });
   ProcessSignal.sigterm.watch().listen((_) async {
     logger.info('arresto richiesto (SIGTERM)');
+    await ui?.stop();
     await service.stop();
     exit(0);
   });
 
   // Resta viva: il servizio lavora tramite gli stream del transport.
   await Completer<void>().future;
+}
+
+/// Health check per container/package: 0 = nodo raggiungibile.
+Future<int> _health(BridgeConfig config) async {
+  if (config.clnUrl.isEmpty) {
+    stderr.writeln('health FAIL: nodo non configurato');
+    return 1;
+  }
+  try {
+    final cln = ClnRestClient.fromConfig(config);
+    final info = await cln.call('getinfo');
+    stdout.writeln('health OK: network=${info['network'] ?? '?'}');
+    return 0;
+  } catch (e) {
+    stderr.writeln('health FAIL: $e');
+    return 1;
+  }
+}
+
+/// Config assente o invalida (JSON rotto, relay/privkey mancanti): messaggio
+/// chiaro nei log + EX_CONFIG (78).
+///
+/// // PERCHÉ: senza config non c'è servizio da avviare (relay e identità
+/// mancano) → un errore esplicito vale più di uno stacktrace. Attenzione: una
+/// rune temporaneamente assente NON è fatale (vedi il blocco del client nel
+/// main) — su StartOS `Revoke Runes` cancella e rigenera `.commando-env`.
+Never _configError(FormatException e) {
+  stderr.writeln('CONFIG NON VALIDA: ${e.message}');
+  exit(78); // sysexits.h EX_CONFIG
 }
 
 Map<String, String> _parseArgs(List<String> args) {
